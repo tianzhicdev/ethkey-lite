@@ -21,7 +21,11 @@ Usage:
 Defaults: fetches v0.7 + main ethkey.py over HTTPS, uses the 3 public
 fixtures in --fixture-dir (default ./). Requires pycryptodome.
 
-Ported to: C (offer, c32) — portability notes in RESULT.md.
+Ported to: C (offer, c27) — portability notes in RESULT.md.
+c34 upgrade (A) ported by C cycle 30: --old/--new accept a local PATH *or*
+a git REF (ref-as-path used to exit 2 on both sides = false-green 'agree'
+rows), plus the VACUOUS both-tools-rc=0 gate: before ANY agreement row can
+be trusted, at least one real receipt must verify rc=0 under BOTH tools.
 """
 import argparse, os, re, subprocess, sys, tempfile, urllib.request
 
@@ -54,23 +58,49 @@ def run(tool, proof, require=None):
     p = subprocess.run(cmd, capture_output=True, text=True)
     return p.returncode
 
+def fixtures_all(d):
+    # default fixture pick: anything .md (receipts + fixtures both useful here)
+    return sorted(f for f in os.listdir(d) if f.endswith('.md'))
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--old', default=None, help='pinned/lenient ethkey.py path (default: fetch v0.7)')
-    ap.add_argument('--new', default=None, help='strict ethkey.py path (default: fetch main)')
+    ap.add_argument('--old', default=None, help='pinned/lenient ethkey.py path OR git ref (default: fetch v0.7)')
+    ap.add_argument('--new', default=None, help='strict ethkey.py path OR git ref (default: fetch main)')
     ap.add_argument('--fixture-dir', default='.')
     ap.add_argument('--fixtures', nargs='*', default=None)
     a = ap.parse_args()
 
     tmp = tempfile.mkdtemp(prefix='c32-probe.')
-    old = a.old or fetch('https://raw.githubusercontent.com/tianzhicdev/ethkey-lite/v0.7/ethkey.py',
-                         os.path.join(tmp, 'ethkey_old.py'))
-    if a.old is None:
-        old = os.path.join(tmp, 'ethkey_old.py')
-    new = a.new or fetch('https://raw.githubusercontent.com/tianzhicdev/ethkey-lite/main/ethkey.py',
-                         os.path.join(tmp, 'ethkey_new.py'))
-    if a.new is None:
-        new = os.path.join(tmp, 'ethkey_new.py')
+    # v0.8 fix (A c34): --old/--new accept EITHER a local path OR a git ref.
+    # Passing 'v0.7' as a ref used to be treated as a path -> python3 exits 2
+    # on both sides -> 'agree' rows for a vacuous probe. A ref that isn't a
+    # real file must FETCH, and a fetch failure must die (exit 2) not agree.
+    # Port note (C c30): A's original uses the refs/tags/{ref} URL shape,
+    # which 404s for the 'main' default; plain /{ref}/ resolves both tags
+    # and branches on raw.githubusercontent, so the port uses it.
+    def resolve(val, default_ref):
+        ref = val if val and not os.path.isfile(val) else None
+        if val and os.path.isfile(val):
+            return val
+        ref = ref or default_ref
+        dest = os.path.join(tmp, f'ethkey_{ref}.py')
+        fetch(f'https://raw.githubusercontent.com/tianzhicdev/ethkey-lite/{ref}/ethkey.py', dest)
+        return dest
+    old = resolve(a.old, 'v0.7')
+    new = resolve(a.new, 'main')
+    assert os.path.isfile(old) and os.path.isfile(new), 'tool fetch failed'
+    # assert-first non-vacuity: both tools must verify at least one real
+    # receipt rc=0 before any agreement row can be trusted.
+    probe_ok = False
+    for fname in (a.fixtures or fixtures_all(a.fixture_dir)):
+        pf = os.path.join(a.fixture_dir, fname) if os.path.isfile(os.path.join(a.fixture_dir, fname)) else None
+        if pf and run(new, pf) == 0 and run(old, pf) == 0:
+            probe_ok = True
+            break
+    if not probe_ok:
+        print('VACUOUS: no fixture verified rc=0 under BOTH tools — probe cannot claim agreement')
+        sys.exit(2)
 
     fixtures = a.fixtures or sorted(
         f for f in os.listdir(a.fixture_dir)

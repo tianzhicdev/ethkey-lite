@@ -417,19 +417,26 @@ jobs:
             c18-throwaway-signed-fixture.md v0.7-verify-workflow.md \
             v0.8-strict-recover.md
           echo "OK: same-ref probe = 0 divergences (strictness invariant holds)"
-          # Non-vacuity leg: the SAME probe against the historical lenient
-          # tool (tag v0.7, immutable) MUST report divergences (exit 1).
-          # If v0.7-vs-main ever goes 0-divergences the probe itself broke.
-          python3 - <<'EOF'
-          import sys, urllib.request
-          req = urllib.request.Request(
-              'https://raw.githubusercontent.com/tianzhicdev/ethkey-lite/v0.7/ethkey.py',
-              headers={'User-Agent': 'Mozilla/5.0'})
-          open('/tmp/ethkey_v07_lenient.py', 'wb').write(
-              urllib.request.urlopen(req, timeout=30).read())
-          EOF
+          # VACUOUS-gate pin (A c34 upgrade, ported c30): a fixture-less run
+          # must die exit 2, NEVER print 'agree' rows. The A c34 defect class:
+          # --old v0.7 was treated as a PATH -> verify exited 2 on both sides
+          # -> every row read 'agree (rc=2)' = false-green strictness claim.
+          mkdir -p /tmp/c30-empty
           set +e
-          python3 scripts-test/mutation-probe.py --old /tmp/ethkey_v07_lenient.py \
+          python3 scripts-test/mutation-probe.py --old ethkey.py --new ethkey.py \
+            --fixture-dir /tmp/c30-empty > /tmp/probe_vacuous.out 2>&1
+          vcode=$?
+          set -e
+          [ "$vcode" -eq 2 ] || { echo "FAIL: fixture-less probe exited $vcode, expected 2 (VACUOUS gate broken)"; exit 1; }
+          grep -q 'VACUOUS' /tmp/probe_vacuous.out || { echo "FAIL: fixture-less probe died without naming the gate"; exit 1; }
+          echo "OK: VACUOUS gate fires — fixture-less probe exits 2, zero agreement rows"
+          # Non-vacuity leg: the SAME probe against the historical lenient
+          # tool (tag v0.7, immutable, REF-resolved via the probe's own
+          # fetch — pins the ref-vs-path resolution fix in CI) MUST report
+          # divergences (exit 1). If v0.7-vs-main ever goes 0-divergences
+          # the probe itself broke.
+          set +e
+          python3 scripts-test/mutation-probe.py --old v0.7 \
             --new ethkey.py --fixture-dir proofs --fixtures \
             c12-dup-field-fixture.md c18-forged-signer-fixture.md \
             c18-throwaway-signed-fixture.md v0.7-verify-workflow.md \
@@ -438,7 +445,8 @@ jobs:
           set -e
           [ "$code" -eq 1 ] || { echo "FAIL: v0.7-vs-main probe exited $code, expected 1 (probe went vacuous?)"; exit 1; }
           grep -q 'divergences=[1-9]' /tmp/probe_v07.out || { echo "FAIL: no divergence rows against historical lenient tool"; exit 1; }
-          echo "OK: probe non-vacuous — v0.7-vs-main still reports the live class ($(grep -o 'divergences=[0-9]*' /tmp/probe_v07.out))"
+          grep -q 'agree: .*baseline (rc=0)' /tmp/probe_v07.out || { echo "FAIL: ref-resolved v0.7 never verified a real receipt rc=0 (both-tools gate bypassed?)"; exit 1; }
+          echo "OK: probe non-vacuous — v0.7-vs-main (ref-resolved fetch) still reports the live class ($(grep -o 'divergences=[0-9]*' /tmp/probe_v07.out))"
 
       - name: CLI argument validation (no tracebacks, documented exit codes)
         run: |
