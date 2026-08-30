@@ -147,6 +147,45 @@ jobs:
           [ "$N" -ge 4 ] || { echo "FAIL: only $N version receipts found (expected >=4)"; exit 1; }
           echo "OK: all $N version receipts pass CLI --require"
 
+      - name: Doc surface pins (README fence quote-clean, sitemap/robots, link liveness)
+        run: |
+          set -euo pipefail
+          # Gap #16: the README's OWN yaml fence must model the quoting rule it
+          # preaches — every `require:` inside a fenced block carries quotes.
+          python3 - <<'EOF'
+          import re, sys
+          src = open('README.md').read()
+          blocks = re.findall(r'^```(?:yaml|yml)\n(.*?)^```', src, re.M | re.S)
+          bad = []
+          for b in blocks:
+              for line in b.splitlines():
+                  m = re.search(r'require:\s*(\S+)', line)
+                  if m and not re.match(r'^["\']', m.group(1)):
+                      bad.append(line.strip())
+          assert bad == [], 'unquoted require: in README fence(s): ' + repr(bad)
+          assert any('require:' in b for b in blocks), 'no require: example in any yaml fence'
+          print(f'OK: {len(blocks)} yaml fences scanned, every require: quoted')
+          EOF
+          # Gap #26: robots must name the sitemap; every sitemap <loc> must
+          # resolve 200 on the live Pages host AND map to a committed file.
+          BASE=https://tianzhicdev.github.io/ethkey-lite
+          grep -q "^Sitemap: ${BASE}/sitemap.xml" robots.txt || { echo 'FAIL: robots missing sitemap'; exit 1; }
+          grep -oP '(?<=<loc>)[^<]+' sitemap.xml | while read -r L; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$L")
+            [ "$code" = "200" ] || { echo "FAIL: sitemap loc $L -> $code"; exit 1; }
+            P="${L#$BASE/}"; [ -z "$P" ] && P=index.html
+            [ -f "$P" ] || { echo "FAIL: sitemap loc $L has no committed file $P"; exit 1; }
+            echo "OK: sitemap loc live + file present ($P)"
+          done
+          # Gap #31: every EXTERNAL href on the three Pages surfaces must be
+          # alive (dead outbound links are the cheapest trust leak to catch).
+          for U in $(grep -ohE 'href="https?://[^"]+"' index.html receipt.html verify.html \
+                       | sed -e 's/^href="//' -e 's/"$//' -e 's/&amp;/\&/g' | sort -u); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -L "$U")
+            [ "$code" = "200" ] || { echo "FAIL: outbound link $U -> $code"; exit 1; }
+            echo "OK: outbound $U"
+          done
+
       - name: CLI argument validation (no tracebacks, documented exit codes)
         run: |
           set -euo pipefail

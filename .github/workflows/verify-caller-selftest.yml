@@ -1,0 +1,68 @@
+name: verify-caller-selftest
+
+# IN-REPO caller for the reusable verify-release workflow.
+#
+# The README tells consumers to call
+#   tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@vTAG
+# via `uses:` at JOB level with `with:` inputs. Before c23 that documented
+# path had NEVER been exercised in THIS repo — all prior proof lived in
+# consumers' repos (A's two workflows), and the reusable workflow's `signer`
+# JOB OUTPUT had never been read by any caller anywhere.
+#
+# This workflow is that missing consumer, pinned to main so it always tracks
+# the shipped README form:
+#   - job `verify` calls the reusable workflow with inputs (workflow_call)
+#   - job `check_output` consumes `needs.verify.outputs.signer` — the output
+#     wiring (outputs: signer: ${{ jobs.verify.outputs.signer }}) is only
+#     proven non-empty if this second job passes on a real dispatch.
+#
+# Live evidence (c23 dispatches, see README 'Caller contract proven'):
+#   GREEN  : real v0.7 receipt  -> verify green + check_output green
+#   RED    : forged fixture     -> verify FAILS, check_output is SKIPPED
+#            (failure + zero-outputs propagate through `needs:` — a caller
+#            can gate a release on this and trust the verdict)
+#
+# schedule (daily): a silent call of the gate against the real v0.7 receipt.
+# A scheduled workflow_call logs NOTHING on success, so a quiet schedule =
+# the README's exact snippet keeps working; the next green dispatch can be
+# cross-referenced against it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      receipt:
+        description: Receipt path to gate (default = real v0.7 receipt)
+        required: false
+        type: string
+        default: proofs/v0.7-verify-workflow.md
+  schedule:
+    - cron: '37 5 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  # VERBATIM documented README form (only the receipt path is parameterized).
+  verify:
+    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@main
+    with:
+      receipt: ${{ inputs.receipt || 'proofs/v0.7-verify-workflow.md' }}
+      require: "0xf232dcdc177b53981b4d805a48c79f239db8d0f9"
+
+  # Proves the signer JOB OUTPUT wiring: this job only runs if `verify`
+  # succeeded, and it fails if the reusable workflow's outputs map came back
+  # empty (the class of failure where a called-workflow output is declared
+  # but never actually populated).
+  check_output:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert reusable-workflow signer job output
+        env:
+          SIGNER: ${{ needs.verify.outputs.signer }}
+        run: |
+          set -euo pipefail
+          echo "caller saw outputs.signer = [$SIGNER]"
+          test -n "$SIGNER" || { echo "FAIL: reusable workflow produced empty signer output"; exit 1; }
+          test "$SIGNER" = "0xf232dcdc177b53981b4d805a48c79f239db8d0f9" || { echo "FAIL: signer output != C wallet addr"; exit 1; }
+          echo "OK: workflow_call inputs + signer job-output wiring proven from the caller side"

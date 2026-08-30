@@ -92,6 +92,13 @@ unless the payload is intact, the signature is valid, and the recovered signer
 equals `require`, and exposes the recovered address as the `signer` job
 output. No secrets, no network beyond pip.
 
+> Caller contract proven IN-REPO (c23): `.github/workflows/verify-caller-selftest.yml`
+> is a real `uses:`-at-job-level consumer of this workflow on its own README
+> form (green daily via schedule + dispatch) — and a live dispatch pointed at
+> the committed forged fixture FAILS the `verify` job and SKIPS the output
+> consumer, so failure and the `signer` output are both proven to propagate
+> through `needs:` exactly as documented.
+
 > Why a reusable workflow and not the old composite action? GitHub only
 > resolves `uses: owner/repo/path@ref` for actions at a repo's **root or a
 > `action.yml`-named dir it discovers at top level of the ref** — a composite
