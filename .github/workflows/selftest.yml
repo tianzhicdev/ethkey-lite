@@ -509,13 +509,18 @@ jobs:
           npm install ethers@6 --no-audit --no-fund >/dev/null
           cp "$GITHUB_WORKSPACE/scripts-test/t-net.mjs" .
           node t-net.mjs "$GITHUB_WORKSPACE"
-          # CLI parity on the proof the harness just wrote (JS-signed receipt)
+          # CLI parity on the proof the harness just wrote (JS-signed receipt).
+          # cd BACK to the workspace first: this shell is still in SCRATCH, and
+          # 'python3 ethkey.py' there is the c5 CWD-class bug that killed the
+          # first live run (exit 2 'can't open file' on the runner, passed from
+          # my local repo CWD).
+          cd "$GITHUB_WORKSPACE"
           ADDR=$(python3 ethkey.py address "$ETHKEY_PK")
-          python3 ethkey.py verify "$GITHUB_WORKSPACE/js-proof-parity.md" --require "$ADDR" \
+          python3 ethkey.py verify js-proof-parity.md --require "$ADDR" \
             | grep -q 'result: OK' || { echo 'FAIL: python CLI rejects the JS-built receipt'; exit 1; }
           echo "OK: python CLI verifies the ethers-signed receipt (JS<->Py byte-format parity)"
           # negative: same receipt vs the WRONG required signer must fail
-          if python3 ethkey.py verify "$GITHUB_WORKSPACE/js-proof-parity.md" --require 0x0000000000000000000000000000000000000000; then
+          if python3 ethkey.py verify js-proof-parity.md --require 0x0000000000000000000000000000000000000000; then
             echo 'FAIL: --require accepted a wrong signer'; exit 1
           fi
           echo "OK: --require still refuses a wrong signer on the JS-built receipt"
