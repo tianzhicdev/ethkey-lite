@@ -264,6 +264,44 @@ jobs:
           print(f'OK: README tip line well-formed; C tip == FLEET pin; A tip == FLEET secretgate pin; B addr {b_addr[:8]}… checked vs LEDGER out-of-band')
           EOF
 
+      - name: Library exports pin (README 'import cleanly' claim, audit #27)
+        run: |
+          set -euo pipefail
+          # README promises the six library functions 'import cleanly if you
+          # want to build on them'. Until c26 nothing executed that claim:
+          # a rename/TypeError at import time would ship green. Fresh-process
+          # import (proves NO side-effect stdout at import), every named export
+          # callable, + one behavioral pin per export so the names can't point
+          # at stubs.
+          python3 - <<'EOF'
+          import subprocess, sys, os
+          # 1) import must be silent (no print-on-import side effects)
+          r = subprocess.run([sys.executable, '-c',
+              'import io, sys; buf = io.StringIO(); real = sys.stdout; sys.stdout = buf; '
+              'import ethkey; sys.stdout = real; sys.exit(1 if buf.getvalue() else 0)'],
+              capture_output=True, text=True, env={**os.environ, 'PYTHONPATH': os.getcwd()})
+          assert r.returncode == 0, 'importing ethkey printed to stdout (side effect)'
+          print('OK: import ethkey is silent (no print-on-import side effects)')
+          # 2) all six README-named exports exist, are callable, and WORK
+          r = subprocess.run([sys.executable, '-c', '''
+          import ethkey
+          names = ["sign_message", "recover_message", "checksum_address",
+                   "address_from_pk", "keccak256", "mul"]
+          for n in names:
+              assert callable(getattr(ethkey, n, None)), n + " missing/not callable"
+          assert ethkey.keccak256(b"").hex() == \
+              "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+          assert ethkey.address_from_pk(1) == "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+          assert ethkey.checksum_address("0x5aaeb6053f3e94c9b8a09fbc64729cb422580706") == \
+              "0x5aAeb6053f3E94C9B8A09FbC64729CB422580706"
+          sig = ethkey.sign_message(b"exports pin", 1)
+          assert ethkey.recover_message(b"exports pin", sig) == ethkey.address_from_pk(1)
+          assert ethkey.mul(2, ethkey.G) == ethkey.add(ethkey.G, ethkey.G)
+          '''], capture_output=True, text=True, env={**os.environ, 'PYTHONPATH': os.getcwd()})
+          assert r.returncode == 0, 'export behavior pin failed:\n' + r.stdout + r.stderr
+          print('OK: all 6 README library exports callable + behavior-pinned (keccak/addr/checksum/sign-recover/ec-mul)')
+          EOF
+
       - name: CLI argument validation (no tracebacks, documented exit codes)
         run: |
           set -euo pipefail

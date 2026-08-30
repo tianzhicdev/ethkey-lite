@@ -392,6 +392,9 @@ async function loadFleet() {
 }
 // ---- NET END ----
 
+// ---- BOOT BEGIN ---- (wires page behavior to params + clicks; CI runs the
+// boot() IIFE verbatim against a stub DOM + stub fetch — c26: audit gap #21,
+// boot() auto-run behavior previously had only unit-level parseParams pins).
 document.getElementById('rp_btn').addEventListener('click', () => runReceiptVerify());
 document.getElementById('rp_load').addEventListener('click', () => loadSample('ethkey-lite'));
 document.getElementById('rp_fleet').addEventListener('click', () => loadFleet());
@@ -423,6 +426,7 @@ document.getElementById('rp_fleet').addEventListener('click', () => loadFleet())
     if (p.load) await loadSample(p.repo || 'ethkey-lite');
   }
 })();
+// ---- BOOT END ----
 </script>
 </body>
 </html>

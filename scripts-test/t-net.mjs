@@ -183,5 +183,115 @@ function makeDom() {
   console.log('JS_PROOF_WRITTEN ' + outp);
 }
 
+// FLEET pin (c16/c25): the trust-anchor table the page hardcodes must stay
+// byte-equal to these values (copied from the team LEDGER). A silent swap in
+// receipt.html turns CI red instead of shipping a stealth trust change.
+{
+  const PINNED = {
+    'ethkey-lite': '0xf232dcdc177b53981b4d805a48c79f239db8d0f9',
+    'secretgate': '0xfd4090e27c1f946ff01a265caa7d4aca662acc15',
+    'hookpack': '0xfd4090e27c1f946ff01a265caa7d4aca662acc15',
+    'secretgate-action': '0xfd4090e27c1f946ff01a265caa7d4aca662acc15',
+  };
+  // read from the COMMITTED page (mod.FLEET above has been mutated by E-cases)
+  const fleetSrc = html.match(/const FLEET = \[([\s\S]*?)\];/);
+  const pairs = [...(fleetSrc ? fleetSrc[1] : '').matchAll(/repo:\s*'([^']+)',\s*signer:\s*'(0x[0-9a-fA-F]{40})'/g)]
+    .map(m => [m[1], m[2].toLowerCase()]);
+  T('PIN: FLEET table == LEDGER-pinned repo->signer pairs (no extra, no drift)',
+    pairs.length === Object.keys(PINNED).length &&
+    pairs.every(([r, s]) => PINNED[r] === s),
+    JSON.stringify(pairs));
+}
+
+// ---- BOOT matrix (c26, audit gap #21) ----
+// The BOOT block (click wiring + the deep-link boot() IIFE) is extracted
+// VERBATIM from the page and executed against a capturing stub DOM + the
+// ROUTES fetch stub. The ONLY harness seam is prefixing the IIFE with an
+// assignment (globalThis.__BOOTP = ...) so it can be awaited, and injecting
+// the FLEET pin seam BEFORE the boot block (boot reads FLEET synchronously,
+// so mutating mod.FLEET after evaluation is too late).
+const boot = html.match(/\/\/ ---- BOOT BEGIN ----[^\n]*\n([\s\S]*?)\/\/ ---- BOOT END ----/);
+if (!boot) { console.error('BOOT block not found in receipt.html'); process.exit(1); }
+const bootPatched = boot[1].replace('(async function boot()', 'globalThis.__BOOTP = (async function boot()');
+T('BOOT: block holds the click wiring + boot() IIFE',
+  boot[1].includes("getElementById('rp_btn').addEventListener") && boot[1].includes('(async function boot()'));
+
+// rich stub DOM: per-id elements, capture rendered cards + click wiring
+function makeBootDom() {
+  globalThis.RENDERED_HTML = [];
+  const clicks = {};
+  const root = { innerHTML: '', children: [], appendChild(c) { this.children.push(c); globalThis.RENDERED_HTML.push(c.innerHTML || ''); } };
+  const mk = (id) => ({ id, className: '', innerHTML: '', value: '', children: [],
+    appendChild(c) { this.children.push(c); globalThis.RENDERED_HTML.push(c.innerHTML || ''); },
+    addEventListener(_ev, fn) { clicks[id] = fn; } });
+  const els = {};
+  for (const id of ['rp_btn', 'rp_load', 'rp_fleet', 'rp_input', 'rp_require', 'rp_output']) els[id] = mk(id);
+  els.rp_output.appendChild = root.appendChild.bind(root);
+  els.rp_output.children = root.children;
+  globalThis.document = { getElementById: (id) => els[id], createElement: () => ({ className: '', innerHTML: '', appendChild() {} }) };
+  return { els, clicks };
+}
+
+async function runBoot(qs, fleetSeam) {
+  globalThis.location = { search: qs };
+  CALLS = [];
+  const { els, clicks } = makeBootDom();
+  await new Function(core[1] + render[1] + net[1] + fleetSeam + bootPatched)();
+  await globalThis.__BOOTP;
+  return { els, clicks, out: globalThis.RENDERED_HTML.join('\n') };
+}
+const SEAM = "FLEET.length = 0; FLEET.push({ repo: 'ethkey-lite', signer: '" + w1.address + "' }, { repo: 'secretgate', signer: '" + w3.address + "' });";
+
+// G1: no params -> zero auto-render, zero fetches, empty prefill, ALL THREE click handlers wired
+{
+  const r = await runBoot('', SEAM);
+  T('G1: no params -> nothing rendered, nothing fetched, require field empty',
+    r.out === '' && CALLS.length === 0 && r.els.rp_require.value === '', r.out.slice(0, 120));
+  T('G1: click wiring registered (btn/load/fleet)',
+    ['rp_btn', 'rp_load', 'rp_fleet'].every((id) => typeof r.clicks[id] === 'function'), JSON.stringify(Object.keys(r.clicks)));
+}
+
+// G2: ?require=<valid> alone -> field prefilled + honest 'paste to verify' card, ZERO fetches
+{
+  const r = await runBoot('?require=' + w1.address.toLowerCase(), SEAM);
+  T('G2: valid require-only prefills field verbatim', r.els.rp_require.value === w1.address.toLowerCase(), r.els.rp_require.value);
+  T('G2: renders PASS require-param card, fetches NOTHING',
+    /required signer prefilled/.test(r.out) && /badge pass/.test(r.out) && CALLS.length === 0, r.out.slice(0, 160));
+}
+
+// G3: ?require=<malformed> -> refusal card, field STAYS EMPTY, zero fetches
+{
+  const r = await runBoot('?require=not-an-address', SEAM);
+  T('G3: malformed require -> refusal card + empty field + zero fetches',
+    /URL param refused/.test(r.out) && r.els.rp_require.value === '' && CALLS.length === 0, r.out.slice(0, 160));
+}
+
+// G4: honored pair ?load=latest&require=<pinned> -> auto-runs loader against pinned signer, RECEIPT VALID
+{
+  ROUTES = [
+    [/tianzhicdev\/ethkey-lite\/tags\?/, () => tags(['v0.7'])],
+    [/tianzhicdev\/ethkey-lite\/contents\/proofs\?ref=v0\.7$/, () => files(['v0.7-a.md'])],
+    [/tianzhicdev\/ethkey-lite\/v0\.7\/proofs\/v0\.7-a\.md$/, () => rcC],
+  ];
+  const r = await runBoot('?load=latest&require=' + w1.address.toLowerCase(), SEAM);
+  T('G4: honored pair auto-loads + renders RECEIPT VALID against pinned signer',
+    /RECEIPT VALID/.test(r.out) && CALLS.some(u => /ref=v0\.7/.test(u)), r.out.slice(0, 200));
+}
+
+// G5: mismatched pair (require != pinned for that repo) -> refusal names pinned signer, ZERO fetches, empty field
+{
+  const r = await runBoot('?repo=secretgate&require=' + w1.address.toLowerCase(), SEAM);
+  T('G5: mismatch pair -> refusal names the pinned signer, zero fetches, no prefill',
+    /the pair disagrees with the pinned FLEET table/.test(r.out) &&
+    r.out.includes(w3.address) && CALLS.length === 0 && r.els.rp_require.value === '', r.out.slice(0, 200));
+}
+
+// G6: ?repo=<allowed> alone (no load) -> 'noted' card, zero fetches
+{
+  const r = await runBoot('?repo=secretgate', SEAM);
+  T('G6: repo-only -> noted card, add-&load hint, zero fetches',
+    /\?repo=secretgate noted/.test(r.out) && CALLS.length === 0, r.out.slice(0, 160));
+}
+
 console.log(fails ? fails + ' FAILURES' : 'net-harness OK');
 process.exit(fails ? 1 : 0);
