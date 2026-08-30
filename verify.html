@@ -36,6 +36,10 @@
 </head>
 <body>
 <h1>ethkey-lite <span>— browser verification</span></h1>
+<p class="muted" style="border:1px solid var(--accent);padding:.5rem .8rem;border-radius:6px">
+Newer: <a href="receipt.html">receipt.html</a> verifies a full <strong>signed
+release receipt</strong> (payload integrity + signer recovery). This page is a
+historical demo of raw message/signature cross-checks.</p>
 <p class="muted">Cross-check that signatures produced by <code>ethkey.py</code> (pure-Python EIP-191
 <code>personal_sign</code>) verify identically under <code>ethers.js v6</code> in the browser.
 Reference key <code>0x46…46</code> is the well-known public EIP test key — not a real wallet.</p>

@@ -63,23 +63,36 @@ as pinned artifacts in any repo. The signature covers the canonical string
 `ethkey-lite-proof v1\ncreated:<t>\nsha256:<hash>` via `personal_sign`, so
 `ethers.verifyMessage()` verifies it too — no Python required.
 
-### Use it in your CI (composite GitHub Action)
+### Use it in your CI (reusable workflow — cross-repo)
 
-One line in any repo whose releases ship an ethkey-lite receipt (e.g.
+Any repo whose releases ship an ethkey-lite receipt (e.g.
 [secretgate](https://github.com/tianzhicdev/secretgate/releases) /
-[hookpack](https://github.com/tianzhicdev/hookpack/releases)):
+[hookpack](https://github.com/tianzhicdev/hookpack/releases)) calls it at
+**job level** — one `uses:` line:
 
 ```yaml
-- uses: tianzhicdev/ethkey-lite/.github/actions/verify-release@v0.6
-  with:
-    receipt: path/to/release-proof.md   # in YOUR workspace (e.g. checked-out)
-    require: 0xf232dcdc177b53981b4d805a48c79f239db8d0f9
+jobs:
+  verify:
+    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.7
+    with:
+      receipt: proofs/release-proof.md   # path in YOUR repo
+      require: 0xYourWalletAddress
 ```
 
-The step installs Python + pycryptodome, runs `verify --require`, fails the
-job unless the payload is intact, the signature is valid, and the recovered
-signer equals `require`, and exposes the recovered address as the `signer`
+The job checks out YOUR repo, checks out `ethkey.py` from ethkey-lite at a
+pinned ref, installs Python + pycryptodome, runs `verify --require`, fails
+unless the payload is intact, the signature is valid, and the recovered signer
+equals `require`, and exposes the recovered address as the `signer` job
 output. No secrets, no network beyond pip.
+
+> Why a reusable workflow and not the old composite action? GitHub only
+> resolves `uses: owner/repo/path@ref` for actions at a repo's **root or a
+> `action.yml`-named dir it discovers at top level of the ref** — a composite
+> under `.github/actions/` referenced from ANOTHER repo fails job-preparation
+> with zero job logs (learned the hard way; see run 33327437042). Reusable
+> workflows (`on: workflow_call`) are the supported cross-repo sharing
+> primitive. The composite still works for **in-repo** use:
+> `./.github/actions/verify-release`.
 
 ## Browser verification
 

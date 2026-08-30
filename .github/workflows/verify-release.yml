@@ -1,0 +1,119 @@
+name: verify-release (reusable)
+
+# Cross-repo release-receipt gating for the ethkey-lite v1 receipt format.
+# THIS is the supported way to share CI logic across repos: a reusable
+# workflow called at JOB level. (Composite actions under .github/actions/
+# can only be `uses:`-referenced from WITHIN their own repo — cross-repo
+# path refs like owner/repo/.github/actions/x@tag are NOT resolvable.)
+#
+# Caller (any public repo with a proofs/*.md receipt):
+#
+#   jobs:
+#     verify:
+#       uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.7
+#       with:
+#         receipt: proofs/mytool-v1.0.0-proof.md
+#         require: 0xYourWalletAddress
+
+on:
+  workflow_call:
+    inputs:
+      receipt:
+        description: Path to the signed ethkey-lite v1 receipt, relative to the CALLER's repo root
+        required: true
+        type: string
+      require:
+        description: Expected signer 0x address (lowercase-compared)
+        required: true
+        type: string
+      python-version:
+        description: Python version for actions/setup-python
+        required: false
+        type: string
+        default: '3.11'
+      ethkey-ref:
+        description: ethkey-lite ref the verifier tool is checked out at (bump only if you deliberately upgrade)
+        required: false
+        type: string
+        default: v0.7
+    outputs:
+      signer:
+        description: Recovered signer address from the receipt signature
+        value: ${{ jobs.verify.outputs.signer }}
+  # Dogfood + manual testing: runnable from THIS repo; `receipt` must then
+  # be a path that exists at this repo's SHA (caller-repo defaults to this repo).
+  workflow_dispatch:
+    inputs:
+      receipt:
+        description: Receipt path (this repo when run here)
+        required: true
+        type: string
+        default: proofs/v0.7-verify-workflow.md
+      require:
+        description: Expected signer address
+        required: true
+        type: string
+        default: 0xf232dcdc177b53981b4d805a48c79f239db8d0f9
+      ethkey-ref:
+        description: ethkey-lite ref for the verifier tool
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      signer: ${{ steps.verify.outputs.signer }}
+    steps:
+      # Caller's checkout (receipt + any files the receipt pins live here).
+      # A plain checkout in a called workflow checks out the CALLER's repo.
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The VERIFIER tool itself comes from THIS repo at a pinned ref.
+      # workflow_call -> inputs.ethkey-ref; workflow_dispatch -> event inputs
+      # (falling back to the tag name of this workflow's own commit).
+      - name: Resolve ethkey-lite ref
+        id: ref
+        shell: bash
+        run: |
+          R="${{ inputs.ethkey-ref }}"
+          if [ -z "$R" ]; then R="${{ github.event.inputs.ethkey-ref }}"; fi
+          if [ -z "$R" ]; then R="${{ github.ref_name }}"; fi
+          echo "ref=$R" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout ethkey-lite (verifier tool)
+        uses: actions/checkout@v4
+        with:
+          repository: tianzhicdev/ethkey-lite
+          ref: ${{ steps.ref.outputs.ref }}
+          path: .ethkey-tools
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install dependency
+        shell: bash
+        run: pip install --quiet pycryptodome
+
+      - name: Verify receipt
+        id: verify
+        shell: bash
+        env:
+          RECEIPT: ${{ inputs.receipt }}
+          REQUIRE: ${{ inputs.require }}
+        run: |
+          set -euo pipefail
+          OUT="$(python3 .ethkey-tools/ethkey.py verify "$RECEIPT" --require "$REQUIRE" || true)"
+          echo "$OUT"
+          SIGNER="$(printf '%s\n' "$OUT" | sed -n 's/^signer: //p' | head -n 1)"
+          echo "signer=$SIGNER" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$OUT" | grep -q 'result: OK'

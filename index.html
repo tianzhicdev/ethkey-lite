@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ethkey-lite — tiny auditable Ethereum keys + signed release receipts</title>
+<meta name="description" content="Pure-python secp256k1/keccak keypairs with known-answer tests, EIP-191 personal_sign, and self-contained signed release receipts you can verify in your browser or one line of CI.">
+<link rel="canonical" href="https://tianzhicdev.github.io/ethkey-lite/">
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --muted:#8b949e; --accent:#58a6ff; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  * { box-sizing: border-box; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.6 var(--mono); max-width:820px; margin:0 auto; padding:2.5rem 1rem; }
+  h1 { font-size:1.5rem; margin-bottom:.2rem; } h1 span { color:var(--muted); font-weight:normal; }
+  .muted { color:var(--muted); }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:1rem 1.2rem; margin:1rem 0; }
+  a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  ul { padding-left:1.2rem; } li { margin:.35rem 0; }
+  footer { margin-top:2.5rem; color:var(--muted); font-size:.8rem; border-top:1px solid var(--border); padding-top:1rem; }
+  .badge { display:inline-block; font-size:.75rem; border:1px solid var(--border); border-radius:4px; padding:0 .4rem; color:var(--muted); }
+</style>
+</head>
+<body>
+<h1>ethkey-lite <span>— auditable Ethereum keys</span></h1>
+<p class="muted">Tiny pure-python secp256k1 + keccak256 keypairs, EIP-191
+<code>personal_sign</code>/<code>recover</code>, known-answer tests byte-identical to
+ethers.js v6 — and <strong>signed release receipts</strong> anyone can re-verify.</p>
+
+<div class="card">
+<strong>Try it in your browser — no install, no upload:</strong>
+<ul>
+  <li><a href="receipt.html">receipt.html</a> — paste a signed release receipt; verifies payload sha256 + recovers the signer (ethers v6) locally.</li>
+  <li><a href="verify.html">verify.html</a> — raw message/signature cross-check demo.</li>
+</ul>
+</div>
+
+<div class="card">
+<strong>Gate your releases on it (one CI line, zero secrets):</strong>
+<pre style="overflow-x:auto;font-size:.85rem">jobs:
+  verify:
+    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.7
+    with:
+      receipt: proofs/release-proof.md
+      require: 0xYourWalletAddress</pre>
+The job verifies the receipt's payload hash, EIP-191 signature, and required
+signer, and fails otherwise. <a href="https://github.com/tianzhicdev/secretgate/releases">secretgate</a> and
+<a href="https://github.com/tianzhicdev/hookpack/releases">hookpack</a> ship receipts in this format.
+</div>
+
+<div class="card">
+<strong>Why "auditable":</strong>
+<ul>
+  <li>Keccak via vetted pycryptodome with published KATs — no hand-rolled crypto.</li>
+  <li>Signatures byte-identical to ethers.js v6 (cross-verified in CI).</li>
+  <li>Every release carries a self-signed, self-contained receipt; the repo signs its own source too.</li>
+  <li>CLI + browser + CI share one verifier core with parity tests.</li>
+</ul>
+</div>
+
+<p><a href="https://github.com/tianzhicdev/ethkey-lite">Source &amp; releases on GitHub →</a>
+<span class="badge">MIT</span> <span class="badge">CI green</span> <span class="badge">signed releases</span></p>
+
+<footer>Part of a small tool family: <a href="https://tianzhicdev.github.io/secretgate/">secretgate</a> ·
+<a href="https://tianzhicdev.github.io/hookpack/">hookpack</a> ·
+<a href="https://tianzhicdev.github.io/bounty-rails/">bounty-rails</a> ·
+tips: ETH <code>0xf232dcdc177b53981b4d805a48c79f239db8d0f9</code></footer>
+</body>
+</html>
