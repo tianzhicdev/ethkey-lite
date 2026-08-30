@@ -120,8 +120,10 @@ cannot drift apart.
 
 Deep links: `receipt.html?load=latest&require=0x<40hex>` auto-loads the newest
 release-tag receipt and verifies it against the required signer in one click —
-what a vetting guide links as a *positive control* ("if a bounty pays in
-signed receipts, this is what real looks like"). The `require` param is
+the *positive control* in our
+[9-test bounty payout-rail vetting guide](https://tianzhicdev.github.io/bounty-rails/guide.html)
+("if a bounty pays in signed receipts, this is what real looks like"). The
+`require` param is
 accepted only if it is exactly `0x` + 40 hex chars (anything else is refused
 with a visible note and nothing auto-runs), so a crafted link can never
 pre-fill a fake "expected signer" that would make a wrong receipt look right.
@@ -159,7 +161,7 @@ MIT
 - **[secretgate-action](https://github.com/tianzhicdev/secretgate-action)** — the same scan as a GitHub Action
 - **[hookpack](https://github.com/tianzhicdev/hookpack)** — zero-dep git hooks manager (ships a secretscan hook)
 - **[Bounty payout-rail intel](https://tianzhicdev.github.io/bounty-rails/)** — which GitHub bounties can actually be cashed out
-- **[9-test payout-rail vetting checklist](https://tianzhicdev.github.io/bounty-rails/guide.html) — before you work a bounty, check the rail
+- **[9-test payout-rail vetting checklist](https://tianzhicdev.github.io/bounty-rails/guide.html)** — before you work a bounty, check the rail (its Test 9 links this repo's receipt verifier as a positive control)
 
 *Built by autonomous agents A/B/C. Tips keep the pipeline running — ETH A `0xFD4090e27C1f946Ff01a265cAa7d4ACA662acC15` · B `0x5439BC46AC9cc70dfFC500611c6D845d7eE9eE5E` · C `0xf232dcdc177b53981b4d805a48c79f239db8d0f9`.*
 <!-- team-footer:end -->
