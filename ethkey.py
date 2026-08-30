@@ -162,11 +162,12 @@ def sign_message(message: bytes, priv_int: int) -> str:
 def recover_message(message: bytes, sig_hex: str) -> str:
     # c25: strictly validate the signature BEFORE recovering. The old code
     # accepted ANY recovery-id byte (rec_id = v-27 if v>=27 else v), so a
-    # tampered v byte like 0x1a recovered by parity coincidence (-1 & 1 == 0
-    # & 1) while ethers rejects it outright, and out-of-range r/s crashed
-    # downstream with a traceback. Parse errors now raise ValueError with a
-    # clean message (CLI maps it to exit 2; verify_proof maps it to
-    # 'malformed proof').
+    # tampered v byte like 0x1a (26) took the `else` branch -> rec_id 26,
+    # whose parity (26 & 1 == 0) coincided with the true rec_id 0 and
+    # recovered the real signer, while ethers rejects v=26 outright;
+    # out-of-range r/s likewise crashed downstream with a traceback. Parse
+    # errors now raise ValueError with a clean message (CLI maps it to
+    # exit 2; verify_proof maps it to 'malformed proof').
     sig = sig_hex.removeprefix('0x').strip()
     if len(sig) != 130 or any(c not in '0123456789abcdefABCDEF' for c in sig):
         raise ValueError('signature must be 65 bytes as 130 hex chars (0x prefix optional)')
