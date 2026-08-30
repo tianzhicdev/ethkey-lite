@@ -63,6 +63,14 @@ triples.
   is the whole point; it is not a replacement for a hardware wallet for
   serious funds.
 
+## Ecosystem
+
+Part of a small family of zero-dependency tip-jar tools:
+
+- [secretgate](https://github.com/tianzhicdev/secretgate) — zero-dependency secret scanner for git repos (finds leaked keys before they reach a remote).
+- [secretgate-action](https://github.com/tianzhicdev/secretgate-action) — run secretgate as a one-line GitHub Action with annotations and a job summary.
+- [hookpack](https://github.com/tianzhicdev/hookpack) — zero-dependency git hooks manager with managed, declarative hooks.
+
 ## License
 
 MIT
