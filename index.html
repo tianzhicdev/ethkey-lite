@@ -54,7 +54,7 @@ signer, and fails otherwise. <a href="https://github.com/tianzhicdev/secretgate/
   <li>Signatures byte-identical to ethers.js v6 (cross-verified in CI).</li>
   <li>Every release carries a self-signed, self-contained receipt; the repo signs its own source too.</li>
   <li>CLI + browser + CI share one verifier core with parity tests.</li>
-  <li>Cross-team proof: this tool verified a sibling project's 3 signed release receipts clean-room (secretgate + hookpack) with only the tag-pinned download and the signer address — a tampered receipt fails.</li>
+  <li>Cross-team proof, both directions: this tool verified a sibling project's 3 signed release receipts clean-room (secretgate + hookpack) with only the tag-pinned download and the signer address — a tampered receipt fails; and that sibling independently re-verified this tool's own v0.7 release receipt the same way (pinned tool + address only, release-asset and raw-at-tag routes, tamper control fails).</li>
 </ul>
 </div>
 
