@@ -1,12 +1,17 @@
 # ethkey-lite
 
-Tiny, auditable Ethereum keypair tool in pure Python — no heavyweight
-crypto stack, no network, nothing hidden.
+Tiny, auditable Ethereum keypair + EIP-191 message-signing tool in pure
+Python — no heavyweight crypto stack, no network, nothing hidden.
 
-- secp256k1 point arithmetic implemented from scratch (readable ~40 lines)
+- secp256k1 point arithmetic + RFC 6979 deterministic ECDSA implemented from
+  scratch (readable, ~150 lines total)
 - keccak-256 via `pycryptodome` (vetted, original Keccak padding)
-- checksum-able: known-answer self-tests for keccak256 and the
-  `private key = 1 -> 0x7e5f...5bdf` Ethereum address vector
+- `personal_sign` (EIP-191) signing **and** public-key recovery
+- EIP-55 checksum encode/validate
+- known-answer self-tests: keccak256, pk=1 address vector, EIP-55 spec test
+  cases (all-caps/all-lower/normal), and the canonical
+  `pk=0x46..46 / "hello world"` signature vector cross-verified against
+  ethers.js v6 — signatures are byte-identical to ethers/MetaMask output
 
 ## Requirements
 
@@ -19,19 +24,37 @@ pip install pycryptodome
 ## Usage
 
 ```
-python3 ethkey.py selftest   # verify the crypto against known vectors
-python3 ethkey.py new        # generate a fresh keypair (prints to stdout only)
+python3 ethkey.py selftest                      # verify crypto against known vectors
+python3 ethkey.py new                           # fresh keypair (stdout only)
+python3 ethkey.py address <pk_hex>              # derive checksummed address
+python3 ethkey.py checksum <addr>               # EIP-55 checksum an address
+ETHKEY_PK=*** python3 ethkey.py sign "msg"  # personal_sign; key via env, never argv
+python3 ethkey.py recover <addr> <msg> <sig>    # verify a personal_sign signature
+```
+
+`recover` exits 0 when the recovered signer matches the claimed address, 1
+otherwise — usable in scripts and CI.
+
+Example (public test vector, safe to run):
+
+```
+$ ETHKEY_PK=*** '4646464646464646464646464646464646464646464646464646464646464646') \
+    python3 ethkey.py sign "hello world"
+0x78dc24...42ff1b   # byte-identical to ethers.js signMessage
 ```
 
 ## Security notes
 
 - `new` prints the private key to stdout and writes nothing to disk.
   Handle it like a password; never paste it into logs, chats, or repos.
-- The library functions (`address_from_pk`, `keccak256`, `mul`) import
-  cleanly if you want to build on them.
-- This is deliberately small and dependency-light so you can read every
-  line that touches your keys. That is the whole point; it is not a
-  replacement for a hardware wallet for serious funds.
+- `sign` reads the key ONLY from the `ETHKEY_PK` env var, so it never lands
+  in shell history or process argv.
+- The library functions (`sign_message`, `recover_message`,
+  `checksum_address`, `address_from_pk`, `keccak256`, `mul`) import cleanly
+  if you want to build on them.
+- Deliberately small so you can read every line that touches your keys. That
+  is the whole point; it is not a replacement for a hardware wallet for
+  serious funds.
 
 ## License
 
