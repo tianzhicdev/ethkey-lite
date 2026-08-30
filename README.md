@@ -118,6 +118,18 @@ uploaded and nothing is signed. Its core parser is unit-tested in CI under
 node+ethers against the same fixtures as the Python CLI, so page and CLI
 cannot drift apart.
 
+**Negative controls:** the verifier's *rejections* are pinned by committed
+attack fixtures — `proofs/c18-forged-signer-fixture.md` carries a *valid*
+signature by a throwaway key with a **forged** `signer:` header claiming the
+maintainer address, and `proofs/c18-throwaway-signed-fixture.md` is a genuine
+receipt by that throwaway key. CI asserts (both runtimes, every fleet trust
+anchor) that the forged file fails everywhere, the genuine-throwaway file
+passes bare but fails any `--require`/`require=` against a fleet address, and
+recovered-signer — never the header — is the source of truth. A "verified"
+banner means nothing unless the same code fails these; run them yourself:
+`ethkey.py verify proofs/c18-forged-signer-fixture.md --require 0xf232…d0f9`
+must exit 1.
+
 Deep links: `receipt.html?load=latest&require=0x<40hex>` auto-loads the newest
 release-tag receipt and verifies it against the required signer in one click —
 the *positive control* in our

@@ -163,6 +163,51 @@ jobs:
           sys.exit(1 if fails else 0)
           EOF
 
+      - name: Negative-control fixtures (forged signer + throwaway key)
+        run: |
+          set -euo pipefail
+          # Attack-class regression (c18): a receipt with a VALID signature by
+          # a throwaway key and a FORGED signer header must fail --require for
+          # every fleet trust anchor; a genuine throwaway-key receipt must pass
+          # WITHOUT require (signature layer honest) and fail WITH require
+          # (anchor layer honest). Proves neither layer passes fail-open.
+          python3 - <<'EOF'
+          import importlib.util, sys
+          spec = importlib.util.spec_from_file_location('ek', 'ethkey.py')
+          ek = importlib.util.module_from_spec(spec); spec.loader.exec_module(ek)
+          C = '0xf232dcdc177b53981b4d805a48c79f239db8d0f9'
+          A = '0xfd4090e27c1f946ff01a265caa7d4aca662acc15'
+          forged = open('proofs/c18-forged-signer-fixture.md').read()
+          threw = open('proofs/c18-throwaway-signed-fixture.md').read()
+          THREW_ADDR = '0x6813eb9362372eef6200f3b1dbc3f819671cba69'
+          fails = 0
+          def T(name, cond, d=''):
+              global fails
+              print(('PASS' if cond else 'FAIL') + ' | ' + name + ((' | ' + d) if not cond and d else ''))
+              fails += not cond
+          # verify_proof has NO require param (require is the CLI layer); the
+          # anchor assertion here is: recovered signer == required addr.
+          def req_check(md, req):
+              ok, signer, r = ek.verify_proof(md)
+              return ok and signer and signer.lower() == req.lower(), r
+          # forged-signer fixture: header claims C, recovery says throwaway key.
+          for req in (C, A):
+              ok, r = req_check(forged, req)
+              T(f'forged rejected (require={req})', not ok, r)
+          ok, signer, r = ek.verify_proof(forged)
+          T('forged rejected bare too (header!=recovered, header cannot override)', not ok, r)
+          T('forged: recovered addr IS the throwaway key (recovery is source of truth)',
+            signer and signer.lower() == THREW_ADDR, str(signer))
+          # throwaway fixture: honest sig+header, wrong signer -> passes bare,
+          # fails any fleet-anchor require
+          ok, signer, r = ek.verify_proof(threw)
+          T('throwaway-key receipt passes WITHOUT require (sig layer honest)', ok, r)
+          for req in (C, A):
+              ok, r = req_check(threw, req)
+              T(f'throwaway rejected (require={req})', not ok, r)
+          sys.exit(1 if fails else 0)
+          EOF
+
       - name: receipt.html core logic tests (browser verifier vs CLI semantics)
         run: |
           set -euo pipefail
@@ -260,6 +305,29 @@ jobs:
           for (const f of Object.keys(FORGED)) {
             const q = await core.verifyReceipt(ins(fx, f, null, false), '');
             T('benign-dup-' + f + '-after accepted', q.ok);
+          }
+          // negative-control fixtures (c18, python matrix parity): a VALID
+          // throwaway-key signature with a forged C-wallet signer header must
+          // make the PAGE fail too — signature layer honest, header cannot
+          // override recovery, and no fleet anchor accepts either fixture.
+          {
+            const CADDR = '0xf232dcdc177b53981b4d805a48c79f239db8d0f9';
+            const AADDR = '0xfd4090e27c1f946ff01a265caa7d4aca662acc15';
+            const forgedFx = fs.readFileSync(REPO + '/proofs/c18-forged-signer-fixture.md', 'utf8');
+            const threwFx = fs.readFileSync(REPO + '/proofs/c18-throwaway-signed-fixture.md', 'utf8');
+            T('c18: fixtures excluded from receipt-name sort', !core.isReceiptName('c18-forged-signer-fixture.md') && !core.isReceiptName('c18-throwaway-signed-fixture.md'));
+            let q = await core.verifyReceipt(forgedFx, CADDR);
+            T('c18 page: forged signer+require rejected', !q.ok && no(q, 'signer') && no(q, 'require'), JSON.stringify(q.checks));
+            q = await core.verifyReceipt(forgedFx, AADDR);
+            T('c18 page: forged signer rejected vs A anchor', !q.ok && no(q, 'signer'));
+            q = await core.verifyReceipt(forgedFx, '');
+            T('c18 page: forged signer rejected WITHOUT require', !q.ok && no(q, 'signer'));
+            q = await core.verifyReceipt(threwFx, '');
+            T('c18 page: genuine throwaway-key receipt passes bare', q.ok, JSON.stringify(q.checks));
+            q = await core.verifyReceipt(threwFx, CADDR);
+            T('c18 page: throwaway-key receipt rejected vs C anchor', !q.ok && no(q, 'require') && !no(q, 'signature'));
+            q = await core.verifyReceipt(threwFx, AADDR);
+            T('c18 page: throwaway-key receipt rejected vs A anchor', !q.ok && no(q, 'require'));
           }
           console.log(fails ? fails + ' FAILURES' : 'receipt.html core OK');
           process.exit(fails ? 1 : 0);
