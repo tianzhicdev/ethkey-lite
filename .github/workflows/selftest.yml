@@ -220,14 +220,27 @@ jobs:
           # the real env contract (GITHUB_ACTION_PATH, GITHUB_OUTPUT, RECEIPT,
           # REQUIRE): one positive + two refusals.
           python3 - <<'EOF'
-          import sys, yaml
-          act = yaml.safe_load(open('.github/actions/verify-release/action.yml'))
-          steps = act['runs']['steps']
-          vr = [s for s in steps if s.get('id') == 'verify']
-          assert len(vr) == 1, f'expected exactly 1 id:verify step, got {len(vr)}'
-          assert vr[0]['shell'] == 'bash', 'expected bash shell step'
-          open('composite-run.sh', 'w').write(vr[0]['run'])
-          print(f'extracted {len(vr[0]["run"])} bytes of composite run block verbatim')
+          import re, sys
+          # Pure-stdlib extraction (runner has pycryptodome only, NO PyYAML —
+          # a `yaml` import here ModuleNotFoundError'd on the first live run).
+          # Indent-based: find id: verify in runs.steps, capture its run: |
+          # block (all deeper-indented lines, dedented to block indent).
+          src = open('.github/actions/verify-release/action.yml').read().splitlines()
+          vi = next(i for i, l in enumerate(src) if re.match(r'\s+id:\s*verify\s*$', l))
+          ri = next(i for i in range(vi, len(src)) if re.match(r'\s+run:\s*\|\s*$', src[i]))
+          bindent = len(src[ri]) - len(src[ri].lstrip())
+          body, cur = [], bindent + 2
+          for l in src[ri + 1:]:
+              if l.strip() and (len(l) - len(l.lstrip())) <= bindent:
+                  break
+              body.append(l[cur:] if len(l) > cur else l.lstrip())
+          text = '\n'.join(body)
+          assert 'set -euo pipefail' in text and 'GITHUB_ACTION_PATH' in text, \
+              'extraction sanity: not the verify step body'
+          assert text.count('grep') == 1 and "grep -q 'result: OK'" in text, \
+              'extraction sanity: fail-closed grep missing'
+          open('composite-run.sh', 'w').write(text)
+          print(f'extracted {len(text)} bytes of composite run block verbatim')
           EOF
           C_ADDR=0xf232dcdc177b53981b4d805a48c79f239db8d0f9
           run_case () { # $1=receipt $2=require $3=expected-exit $4=label
