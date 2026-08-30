@@ -260,6 +260,10 @@ async function runReceiptVerify(sourceNote) {
   renderReceipt(res);
 }
 
+// ---- NET BEGIN ---- (network loaders; NOT in the CORE block because they
+// reach out() fetch(). CI unit-tests them in a separate harness with a
+// stubbed fetch + DOM (c24: audit gaps #19/#20/#22 — the tag-pinned route,
+// multi-receipt filter, and fleet summary previously had ZERO CI coverage).
 async function fetchText(url) {
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -299,12 +303,15 @@ async function collectReceipts(repoName) {
       .map(f => f.name).filter(isReceiptName));
   const tryAt = async (ref, files) => {
     // Verify EVERY receipt sharing the newest version (multi-receipt releases);
-    // older-tag walk-down only happens when the newest version 404s entirely.
+    // older-tag walk-down happens when the newest version has nothing LOADABLE
+    // (404 listing OR every raw fetch failed — raw failures are caught per
+    // file). The `newest ?` guard is defensive: an empty listing must produce
+    // an empty sameVer without dereferencing null (c24 stubbed-fetch audit).
     const newest = files.length ? verKey(files[0]) : null;
-    const sameVer = files.filter(n => {
+    const sameVer = newest ? files.filter(n => {
       const k = verKey(n);
       return k[0] === newest[0] && k[1] === newest[1] && k[2] === newest[2];
-    });
+    }) : [];
     const results = [];
     for (const n of sameVer) {
       const url = RAW + '/' + (ref || 'HEAD') + '/proofs/' + n;
@@ -383,6 +390,7 @@ async function loadFleet() {
     '</span> ' + okCount + '/' + total + ' receipts valid (each required its repo\u2019s pinned signer)';
   root.appendChild(sum);
 }
+// ---- NET END ----
 
 document.getElementById('rp_btn').addEventListener('click', () => runReceiptVerify());
 document.getElementById('rp_load').addEventListener('click', () => loadSample('ethkey-lite'));

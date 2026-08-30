@@ -492,3 +492,67 @@ jobs:
           process.exit(fails ? 1 : 0);
           EOF
           node t.mjs "$GITHUB_WORKSPACE"
+
+      - name: receipt.html network loaders (stubbed-fetch matrix, audit #19/#20/#22)
+        run: |
+          set -euo pipefail
+          # collectReceipts (tag-pinned route + walk-down + multi-receipt
+          # sameVer filter + HEAD/committed fallbacks) and loadFleet (fleet
+          # board summary) had ZERO CI coverage: the CORE block deliberately
+          # excludes fetch-dependent code. This step runs them headless against
+          # a stubbed fetch + stub DOM, with REAL signature verification via
+          # freshly-signed ethers fixtures (public test keys). It also closes
+          # gap #10 from the other side: the JS-built receipt is re-verified by
+          # the PYTHON CLI with --require (byte-identical format both ways).
+          SCRATCH=$(mktemp -d); cd "$SCRATCH"
+          npm init -y >/dev/null
+          npm install ethers@6 --no-audit --no-fund >/dev/null
+          cp "$GITHUB_WORKSPACE/scripts-test/t-net.mjs" .
+          node t-net.mjs "$GITHUB_WORKSPACE"
+          # CLI parity on the proof the harness just wrote (JS-signed receipt)
+          ADDR=$(python3 ethkey.py address "$ETHKEY_PK")
+          python3 ethkey.py verify "$GITHUB_WORKSPACE/js-proof-parity.md" --require "$ADDR" \
+            | grep -q 'result: OK' || { echo 'FAIL: python CLI rejects the JS-built receipt'; exit 1; }
+          echo "OK: python CLI verifies the ethers-signed receipt (JS<->Py byte-format parity)"
+          # negative: same receipt vs the WRONG required signer must fail
+          if python3 ethkey.py verify "$GITHUB_WORKSPACE/js-proof-parity.md" --require 0x0000000000000000000000000000000000000000; then
+            echo 'FAIL: --require accepted a wrong signer'; exit 1
+          fi
+          echo "OK: --require still refuses a wrong signer on the JS-built receipt"
+          rm -f "$GITHUB_WORKSPACE/js-proof-parity.md"
+
+  py39-floor:
+    # README claims 'Python 3.9+'. Until c24, CI only ever ran 3.11 (audit #28):
+    # the floor was a doc claim with zero enforcement. This job runs the tool's
+    # own selftest + a real receipt verification on 3.9, and machine-pins the
+    # floor claim with vermin so a future accidental 3.10+ construct either
+    # fails 3.9 here or must update the pinned bound.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install dependency
+        run: pip install pycryptodome vermin
+
+      - name: Tool selftest on the claimed floor version
+        run: python3 ethkey.py selftest
+
+      - name: Real release receipt verifies on 3.9
+        env:
+          C_ADDR: "0xf232dcdc177b53981b4d805a48c79f239db8d0f9"
+        run: |
+          set -euo pipefail
+          python3 ethkey.py verify proofs/v0.7-verify-workflow.md --require "$C_ADDR" | grep -q 'result: OK'
+
+      - name: Floor claim machine-pinned (vermin)
+        run: |
+          set -euo pipefail
+          vermin --no-tips --no-parse-comments --target=3.9- ethkey.py > vermin.log 2>&1 || { cat vermin.log; exit 1; }
+          grep -Eq 'Minimum required versions: 3\.[0-9]' vermin.log || { cat vermin.log; exit 1; }
+          grep -q 'Minimum required versions: 3.1[0-9]' vermin.log && { echo 'FAIL: code now needs >=3.10 but README claims 3.9+'; exit 1; } || true
+          tail -3 vermin.log
+          echo "OK: static floor <= 3.9, README claim holds"
