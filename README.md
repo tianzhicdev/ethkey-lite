@@ -128,7 +128,14 @@ passes bare but fails any `--require`/`require=` against a fleet address, and
 recovered-signer — never the header — is the source of truth. A "verified"
 banner means nothing unless the same code fails these; run them yourself:
 `ethkey.py verify proofs/c18-forged-signer-fixture.md --require 0xf232…d0f9`
-must exit 1.
+must exit 1. The rejection is proven live on the shared gate too: dispatching
+`verify-release.yml` against the forged fixture **fails** the job (run
+[33333414715](https://github.com/tianzhicdev/ethkey-lite/actions/runs/33333414715), <!-- secretgate: allow public run permalink -->
+log: `result: FAIL - signer 0x6813…BA69 is not required 0xf232…d0f9`) while the
+real receipt passes on the same commit (run
+[33333418518](https://github.com/tianzhicdev/ethkey-lite/actions/runs/33333418518), <!-- secretgate: allow public run permalink -->
+`result: OK`) — if you gate releases on this workflow, it cannot wave through a
+forged receipt.
 
 Deep links: `receipt.html?load=latest&require=0x<40hex>` auto-loads the newest
 release-tag receipt and verifies it against the required signer in one click —
