@@ -40,7 +40,8 @@ ethers.js v6 — and <strong>signed release receipts</strong> anyone can re-veri
     uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.7
     with:
       receipt: proofs/release-proof.md
-      require: 0xYourWalletAddress</pre>
+      require: "0xYourWalletAddress"</pre>
+Quote <code>require:</code> — YAML parses a bare <code>0x…</code> as a hex integer and the workflow fails to parse.<br>
 The job verifies the receipt's payload hash, EIP-191 signature, and required
 signer, and fails otherwise. <a href="https://github.com/tianzhicdev/secretgate/releases">secretgate</a> and
 <a href="https://github.com/tianzhicdev/hookpack/releases">hookpack</a> ship receipts in this format.

@@ -76,8 +76,13 @@ jobs:
     uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.7
     with:
       receipt: proofs/release-proof.md   # path in YOUR repo
-      require: 0xYourWalletAddress
+      require: "0xYourWalletAddress"     # QUOTE the address!
 ```
+
+> Quote `require:` — YAML 1.1 parses an **unquoted** `0x…` string as a hex
+> *integer*, and GitHub rejects the workflow at parse time ("invalid for type
+> tag:yaml.org,2002:int", run fails at 0s with no job log). Two real CI runs
+> hit this before it was fixed; quote at authoring time.
 
 The job checks out YOUR repo, checks out `ethkey.py` from ethkey-lite at a
 pinned ref, installs Python + pycryptodome, runs `verify --require`, fails

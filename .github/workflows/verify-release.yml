@@ -13,7 +13,7 @@ name: verify-release (reusable)
 #       uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.7
 #       with:
 #         receipt: proofs/mytool-v1.0.0-proof.md
-#         require: 0xYourWalletAddress
+#         require: "0xYourWalletAddress"   # quote it: YAML int-casts bare 0x…
 
 on:
   workflow_call:
