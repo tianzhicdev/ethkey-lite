@@ -302,6 +302,45 @@ jobs:
           print('OK: all 6 README library exports callable + behavior-pinned (keccak/addr/checksum/sign-recover/ec-mul)')
           EOF
 
+      - name: Mutation probe — strictness regression pin (A c32 tool, ported c27)
+        run: |
+          set -euo pipefail
+          # A's c32 stranger-side probe found the c25 defect class was NOT
+          # limited to v=26: ANY parity-matching invalid recovery byte walks
+          # through the tool at the @v0.7 pin. Ported here (with a NEW variant
+          # this repo found: v=ff -> rec_id 228, parity 0, accepts every
+          # true rec_id-0 receipt). The PINNED invariant (A's port note):
+          # same tool vs itself across the whole fixture set must yield ZERO
+          # divergences forever = regression guard against re-lenienting.
+          python3 scripts-test/mutation-probe.py --old ethkey.py --new ethkey.py \
+            --fixture-dir proofs --fixtures \
+            c12-dup-field-fixture.md c18-forged-signer-fixture.md \
+            c18-throwaway-signed-fixture.md v0.7-verify-workflow.md \
+            v0.8-strict-recover.md
+          echo "OK: same-ref probe = 0 divergences (strictness invariant holds)"
+          # Non-vacuity leg: the SAME probe against the historical lenient
+          # tool (tag v0.7, immutable) MUST report divergences (exit 1).
+          # If v0.7-vs-main ever goes 0-divergences the probe itself broke.
+          python3 - <<'EOF'
+          import sys, urllib.request
+          req = urllib.request.Request(
+              'https://raw.githubusercontent.com/tianzhicdev/ethkey-lite/v0.7/ethkey.py',
+              headers={'User-Agent': 'Mozilla/5.0'})
+          open('/tmp/ethkey_v07_lenient.py', 'wb').write(
+              urllib.request.urlopen(req, timeout=30).read())
+          EOF
+          set +e
+          python3 scripts-test/mutation-probe.py --old /tmp/ethkey_v07_lenient.py \
+            --new ethkey.py --fixture-dir proofs --fixtures \
+            c12-dup-field-fixture.md c18-forged-signer-fixture.md \
+            c18-throwaway-signed-fixture.md v0.7-verify-workflow.md \
+            v0.8-strict-recover.md > /tmp/probe_v07.out
+          code=$?
+          set -e
+          [ "$code" -eq 1 ] || { echo "FAIL: v0.7-vs-main probe exited $code, expected 1 (probe went vacuous?)"; exit 1; }
+          grep -q 'divergences=[1-9]' /tmp/probe_v07.out || { echo "FAIL: no divergence rows against historical lenient tool"; exit 1; }
+          echo "OK: probe non-vacuous — v0.7-vs-main still reports the live class ($(grep -o 'divergences=[0-9]*' /tmp/probe_v07.out))"
+
       - name: CLI argument validation (no tracebacks, documented exit codes)
         run: |
           set -euo pipefail

@@ -77,7 +77,7 @@ Any repo whose releases ship an ethkey-lite receipt (e.g.
 ```yaml
 jobs:
   verify:
-    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.7
+    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.8
     with:
       receipt: proofs/release-proof.md   # path in YOUR repo
       require: "0xYourWalletAddress"     # QUOTE the address!
@@ -200,6 +200,14 @@ newest version verified, each standalone.
 - The library functions (`sign_message`, `recover_message`,
   `checksum_address`, `address_from_pk`, `keccak256`, `mul`) import cleanly
   if you want to build on them.
+- The verifier is parse-strict since v0.8: a signature must be exactly
+  130 hex chars with recovery id in {0, 1, 27, 28} and 0 < r, s < n —
+  byte-parity with ethers v6. Tags before v0.8 accepted any
+  parity-matching invalid recovery byte (e.g. `v=ff` recovered the true
+  signer of a rec-id-0 receipt); if you pin the tool in CI, pin `@v0.8`
+  or newer. The regression is machine-pinned: `scripts-test/mutation-probe.py`
+  (ported from a stranger audit) must report zero divergences same-ref and
+  nonzero against the historical v0.7 tool, in CI, every push.
 - Deliberately small so you can read every line that touches your keys. That
   is the whole point; it is not a replacement for a hardware wallet for
   serious funds.

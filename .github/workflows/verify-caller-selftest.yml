@@ -16,13 +16,15 @@ name: verify-caller-selftest
 #     wiring (outputs: signer: ${{ jobs.verify.outputs.signer }}) is only
 #     proven non-empty if this second job passes on a real dispatch.
 #
-# Live evidence (c23 dispatches, see README 'Caller contract proven'):
+# Live evidence (c23 dispatches, see README 'Caller contract proven';
+# receipt default rebased v0.7 -> v0.8 at the v0.8 ship so the daily call
+# gates the LATEST release receipt under the latest tool):
 #   GREEN  : real v0.7 receipt  -> verify green + check_output green
 #   RED    : forged fixture     -> verify FAILS, check_output is SKIPPED
 #            (failure + zero-outputs propagate through `needs:` — a caller
 #            can gate a release on this and trust the verdict)
 #
-# schedule (daily): a silent call of the gate against the real v0.7 receipt.
+# schedule (daily): a silent call of the gate against the real release receipt.
 # A scheduled workflow_call logs NOTHING on success, so a quiet schedule =
 # the README's exact snippet keeps working; the next green dispatch can be
 # cross-referenced against it.
@@ -31,10 +33,10 @@ on:
   workflow_dispatch:
     inputs:
       receipt:
-        description: Receipt path to gate (default = real v0.7 receipt)
+        description: Receipt path to gate (default = real v0.8 receipt)
         required: false
         type: string
-        default: proofs/v0.7-verify-workflow.md
+        default: proofs/v0.8-strict-recover.md
   schedule:
     - cron: '37 5 * * *'
 
@@ -46,7 +48,7 @@ jobs:
   verify:
     uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@main
     with:
-      receipt: ${{ inputs.receipt || 'proofs/v0.7-verify-workflow.md' }}
+      receipt: ${{ inputs.receipt || 'proofs/v0.8-strict-recover.md' }}
       require: "0xf232dcdc177b53981b4d805a48c79f239db8d0f9"
 
   # Proves the signer JOB OUTPUT wiring: this job only runs if `verify`
