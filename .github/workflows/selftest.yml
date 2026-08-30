@@ -107,6 +107,46 @@ jobs:
             }
             console.log("ethers proof cross-check OK");' "$PROOF"
 
+      - name: Documented CLI surfaces (new/checksum/ENVKEY_PK-refusal/all-receipts)
+        run: |
+          set -euo pipefail
+          # README: `new` = "fresh keypair (stdout only)" and "writes nothing
+          # to disk" — pin BOTH halves of that claim (c22 audit gap #3).
+          DIRTY_BEFORE=$(git status --porcelain)
+          NEWOUT=$(python3 ethkey.py new)
+          PK=$(echo "$NEWOUT" | grep '^private_key_hex:' | sed 's/private_key_hex: //')
+          echo "$PK" | grep -qE '^0x[0-9a-f]{64}$' || { echo "FAIL: pk not 0x+64hex"; exit 1; }
+          [ "$(git status --porcelain)" = "$DIRTY_BEFORE" ] || { echo "FAIL: 'new' touched the worktree"; exit 1; }
+          echo "OK: new -> well-formed pk, zero disk writes"
+          # README: `checksum` CLI subcommand — pin the CLI WIRING (not just
+          # the lib fn) against the canonical EIP-55 mixed-case vectors
+          # (c22 audit gap #5).
+          [ "$(python3 ethkey.py checksum 0x5aaeb6053f3e94c9b8a09fbc64729cb422580706)" = "0x5aAeb6053f3E94C9B8A09FbC64729CB422580706" ] || { echo "FAIL: EIP-55 vector 1"; exit 1; }
+          [ "$(python3 ethkey.py checksum 0xfd4090e27c1f946ff01a265caa7d4aca662acc15)" = "0xFD4090e27C1f946Ff01a265cAa7d4ACA662acC15" ] || { echo "FAIL: EIP-55 vector 2"; exit 1; }
+          echo "OK: checksum CLI matches EIP-55 spec vectors"
+          # README: key via ETHKEY_PK env "never appears in argv" — pin the
+          # REFUSAL branch: no env -> clean exit 2 naming ETHKEY_PK, no
+          # traceback (c22 audit gap #6).
+          set +e
+          ERR=$(env -u ETHKEY_PK python3 ethkey.py sign hello 2>&1 >/dev/null); code=$?
+          set -e
+          [ "$code" -eq 2 ] || { echo "FAIL: sign-without-env exited $code, expected 2"; exit 1; }
+          case "$ERR" in *Traceback*) echo "FAIL: sign-without-env traceback"; exit 1;; esac
+          case "$ERR" in *ETHKEY_PK*) ;; *) echo "FAIL: error doesn't name ETHKEY_PK"; exit 1;; esac
+          echo "OK: sign without ETHKEY_PK -> exit 2, names the var, no traceback"
+          # README: 'Every release ships a signed receipt' — every
+          # version-named receipt in proofs/ must verify against the C signer
+          # via the CLI, not just the JS core (c22 audit gaps #11/#12: v0.4
+          # was JS-only, v0.6 was never read by any step).
+          C_ADDR=0xf232dcdc177b53981b4d805a48c79f239db8d0f9
+          N=0
+          for f in proofs/v*.md; do
+            python3 ethkey.py verify "$f" --require "$C_ADDR" >/dev/null
+            N=$((N+1)); echo "OK: $f verifies via CLI --require"
+          done
+          [ "$N" -ge 4 ] || { echo "FAIL: only $N version receipts found (expected >=4)"; exit 1; }
+          echo "OK: all $N version receipts pass CLI --require"
+
       - name: CLI argument validation (no tracebacks, documented exit codes)
         run: |
           set -euo pipefail
