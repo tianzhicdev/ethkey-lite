@@ -9,8 +9,10 @@ name: verify-caller-selftest
 # consumers' repos (A's two workflows), and the reusable workflow's `signer`
 # JOB OUTPUT had never been read by any caller anywhere.
 #
-# This workflow is that missing consumer, pinned to main so it always tracks
-# the shipped README form:
+# This workflow is that missing consumer, pinned to the EXACT documented
+# ref (@v0.8, same string the README fence + landing snippet print — a c30
+# claims-vs-pins audit caught that it previously tracked @main, so the
+# daily call never exercised the form consumers actually copy):
 #   - job `verify` calls the reusable workflow with inputs (workflow_call)
 #   - job `check_output` consumes `needs.verify.outputs.signer` — the output
 #     wiring (outputs: signer: ${{ jobs.verify.outputs.signer }}) is only
@@ -46,7 +48,7 @@ permissions:
 jobs:
   # VERBATIM documented README form (only the receipt path is parameterized).
   verify:
-    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@main
+    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.8
     with:
       receipt: ${{ inputs.receipt || 'proofs/v0.8-strict-recover.md' }}
       require: "0xf232dcdc177b53981b4d805a48c79f239db8d0f9"

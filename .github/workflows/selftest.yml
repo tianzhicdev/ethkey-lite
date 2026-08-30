@@ -184,12 +184,45 @@ jobs:
           done
           # Gap #31: every EXTERNAL href on the three Pages surfaces must be
           # alive (dead outbound links are the cheapest trust leak to catch).
-          for U in $(grep -ohE 'href="https?://[^"]+"' index.html receipt.html verify.html \
-                       | sed -e 's/^href="//' -e 's/"$//' -e 's/&amp;/\&/g' | sort -u); do
+          # c30 widenings (claims-vs-pins audit): README's own URLs (its
+          # deep-link + the two run permalinks) and the <script src> CDN URLs
+          # (both verifier pages HARD-FAIL without ethers 6.13.2 — a dead
+          # script tag is worse than a dead href) join the liveness set.
+          for U in $( (grep -ohE 'href="https?://[^"]+"' index.html receipt.html verify.html \
+                         | sed -e 's/^href="//' -e 's/"$//' -e 's/&amp;/\&/g'
+                       grep -ohE '<script src="https?://[^"]+"' index.html receipt.html verify.html \
+                         | sed -e 's/^<script src="//' -e 's/"$//'
+                       grep -ohE 'https?://[^ )>"`'\'']+' README.md | sed -e 's/[.,)]*$//'
+                      ) | sort -u); do
             code=$(curl -s -o /dev/null -w '%{http_code}' -L "$U")
             [ "$code" = "200" ] || { echo "FAIL: outbound link $U -> $code"; exit 1; }
             echo "OK: outbound $U"
           done
+          # c30 gap #1: README 'License: MIT' + landing 'MIT' badge were a
+          # stranger-facing legal claim with ZERO artifact — no LICENSE file
+          # existed. Pin: file committed AND the SPDX line is really MIT.
+          [ -f LICENSE ] && head -3 LICENSE | grep -q '^MIT License$' \
+            || { echo 'FAIL: README/index claim MIT license but no committed MIT LICENSE file'; exit 1; }
+          echo "OK: LICENSE committed + matches the documented MIT claim"
+          # c30 gap #9: consumer-facing version refs must not drift apart.
+          # Extract @vX.Y from the README fence + landing snippet, assert all
+          # equal, == the reusable workflow's ethkey-ref default (HEAD), and
+          # == the tag the in-repo caller actually uses.
+          python3 - <<'EOF'
+          import re, sys
+          readme = re.search(r'verify-release\.yml@(v\d+\.\d+(?:\.\d+)?)', open('README.md').read())
+          index = re.search(r'verify-release\.yml@(v\d+\.\d+(?:\.\d+)?)', open('index.html').read())
+          wfr = re.search(r"ethkey-ref:\s*\n(?:[^:\n]*\n)?\s*(?:description|required|type):\s*[^\n]*\n\s*(?:description|required|type):\s*[^\n]*\n\s*(?:description|required|type):\s*[^\n]*\n\s*default:\s*'?(v\d+\.\d+(?:\.\d+)?)'?",
+                          open('.github/workflows/verify-release.yml').read())
+          caller = re.search(r'verify-release\.yml@(v\d+\.\d+(?:\.\d+)?)',
+                             open('.github/workflows/verify-caller-selftest.yml').read())
+          refs = {'README': readme, 'index': index, 'ethkey-ref default': wfr, 'caller-selftest ref': caller}
+          missing = [k for k, m in refs.items() if not m]
+          assert not missing, f'FAIL: version ref not found in: {missing}'
+          vals = {k: m.group(1) for k, m in refs.items()}
+          assert len(set(vals.values())) == 1, f'FAIL: version refs drifted: {vals}'
+          print(f'OK: consumer version refs consistent across 4 surfaces ({vals["README"]})')
+          EOF
 
       - name: Page meta-surface contract (A c30 port, A c33 offer)
         run: |
@@ -243,6 +276,11 @@ jobs:
           attached = set()
           for r in rel:
               tag = r['tag_name']
+              # c30 gap #2: the claim is 'every release ships a receipt' — a
+              # release with ZERO assets passes every other rail vacuously.
+              if not r['assets']:
+                  errors.append(f'{tag}: release has NO assets (claim false for this tag)')
+                  continue
               tv = re.fullmatch(r'v(\d+)\.(\d+)(?:\.(\d+))?', tag)
               assert tv, f'FAIL: non-semver tag {tag}'
               for a in r['assets']:
@@ -471,6 +509,34 @@ jobs:
           [ "$code" -eq 1 ] || { echo "FAIL: missing file exited $code, expected 1"; exit 1; }
           case "$ERR" in *Traceback*) echo "FAIL: missing file printed a traceback"; exit 1;; esac
           echo "OK: missing file -> exit 1, no traceback"
+          # c30 gap #5: README documents exit 2 for a MALFORMED signature /
+          # invalid recovery id / out-of-range r,s — the mutation probe only
+          # compares old-vs-new rc SHAPE, never asserts the current tool's
+          # own documented exit codes here. Pin all three malformed shapes.
+          SIG=$(grep -o '0x[0-9a-f]\{130\}' proofs/v0.8-strict-recover.md | head -1)
+          for S in "0x$(printf '%s' "${SIG#0x}" | cut -c1-128)ff" "0xdeadbeef" "0x$(printf '%064d' 0)${SIG:66:64}"; do
+            set +e
+            ERR=$(python3 ethkey.py recover 0xf232dcdc177b53981b4d805a48c79f239db8d0f9 msg "$S" 2>&1 >/dev/null); code=$?
+            set -e
+            [ "$code" -eq 2 ] || { echo "FAIL: malformed sig ${S: -8} exited $code, expected 2"; exit 1; }
+            case "$ERR" in *Traceback*) echo "FAIL: malformed sig printed a traceback"; exit 1;; esac
+          done
+          echo "OK: recover malformed-v / short-sig / r=0 -> exit 2, no traceback (documented contract)"
+          # c30 gap #6: the README's run-it-yourself negative control names a
+          # CLI COMMAND with a documented exit code; prior pins asserted the
+          # library function only. Execute the exact documented command.
+          set +e
+          python3 ethkey.py verify proofs/c18-forged-signer-fixture.md \
+            --require 0xf232dcdc177b53981b4d805a48c79f239db8d0f9 >/dev/null 2>&1
+          code=$?
+          set -e
+          [ "$code" -eq 1 ] || { echo "FAIL: documented forged-fixture CLI control exited $code, expected 1"; exit 1; }
+          echo "OK: README 'run them yourself' CLI control exits 1 as documented"
+          # c30 gap #13: README claims 'no network' for the tool. Import-time
+          # purity assert: a future urllib/socket/http import must not ship green.
+          ! grep -qE '^(import|from) (urllib|socket|http|requests)' ethkey.py \
+            || { echo 'FAIL: ethkey.py imports a network module while README claims no network'; exit 1; }
+          echo "OK: no network imports in ethkey.py (README 'no network' claim)"
 
       - name: Duplicate-header-field forgery matrix (first-wins parse audit)
         run: |
