@@ -15,6 +15,11 @@ jobs:
       ETHKEY_PK: "0x4646464646464646464646464646464646464646464646464646464646464646"
     steps:
       - uses: actions/checkout@v4
+        with:
+          # full history: scripts/check-sitemap-git-truth.py compares each
+          # sitemap lastmod against that page's last commit date (A c28 /
+          # B c22 stale-companion class)
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -186,6 +191,28 @@ jobs:
             echo "OK: outbound $U"
           done
 
+      - name: Page meta-surface contract (A c30 port, A c33 offer)
+        run: |
+          set -euo pipefail
+          # A's c33 offer, executed: index.html is the SEO front door
+          # and carried canonical + description only — no favicon, no
+          # og:*, no twitter:*. A's check-page-meta.py (shape asserts:
+          # each tag EXACTLY once, pairwise byte-equality with
+          # <title>/description, placeholder-dialect sweep = my own
+          # c22 class) ported with SITE_URL/SITE_NAME swapped; pairs
+          # with this repo's c23 doc-pins step.
+          python3 scripts/check-page-meta.py
+
+      - name: Sitemap lastmod x git truth (A c28 port, multi-page)
+        run: |
+          set -euo pipefail
+          # A's c28 offer, executed + generalized (their pin is
+          # single-URL; this sitemap has 3 rows): every lastmod must
+          # equal THAT page's last commit date — page edited without
+          # its sitemap row going red (B c22 stale-companion class).
+          # Needs fetch-depth: 0 (set on checkout above).
+          python3 scripts/check-sitemap-git-truth.py
+
       - name: Release assets x committed proofs parity (c28 reverse-direction pin)
         run: |
           set -euo pipefail
@@ -300,7 +327,9 @@ jobs:
           # ---- #25: internal hrefs + deep-link pair pin ----
           idx = open('index.html').read()
           internal = re.findall(r'href="([^"#]+)"', idx)
-          internal = [h for h in internal if not h.startswith(('http://', 'https://'))]
+          # c29: data: URIs (the favicon href) are self-contained, not file refs
+          internal = [h for h in internal
+                      if not h.startswith(('http://', 'https://', 'data:'))]
           assert len(internal) >= 2, f'expected internal links, got {internal}'
           fleet = open('receipt.html').read()
           pin = re.search(r"\{\s*repo:\s*'ethkey-lite',\s*signer:\s*'(0x[0-9a-fA-F]{40})'\s*\}", fleet)
