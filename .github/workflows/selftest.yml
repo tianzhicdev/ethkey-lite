@@ -131,6 +131,38 @@ jobs:
           case "$ERR" in *Traceback*) echo "FAIL: missing file printed a traceback"; exit 1;; esac
           echo "OK: missing file -> exit 1, no traceback"
 
+      - name: Duplicate-header-field forgery matrix (first-wins parse audit)
+        run: |
+          set -euo pipefail
+          # First-wins setdefault parse must never let a FORGED duplicate of a
+          # signed field (inserted BEFORE the authentic line) verify, and
+          # benign accidental duplication (authentic first) must keep passing.
+          # Run against the committed fixture (signed with throwaway pk=2).
+          python3 - <<'EOF'
+          import importlib.util, sys
+          spec = importlib.util.spec_from_file_location('ek', 'ethkey.py')
+          ek = importlib.util.module_from_spec(spec); spec.loader.exec_module(ek)
+          good = open('proofs/c12-dup-field-fixture.md').read()
+          FORGED = {'created': '2020-01-01T00:00:00Z', 'sha256': '0'*64,
+                    'signer': '0x' + 'ab'*20, 'signature': '0x' + '11'*65}
+          def ins(md, f, v, before=True):
+              L = md.splitlines(); i = next(j for j,l in enumerate(L) if l.startswith(f+':'))
+              L.insert(i if before else i+1, f + ': ' + v if before else L[i]); return '\n'.join(L)+'\n'
+          fails = 0
+          for f, v in FORGED.items():
+              ok, _, r = ek.verify_proof(ins(good, f, v))
+              print(('PASS' if not ok else 'FAIL') + f' | forged-{f}-first | {r}')
+              fails += ok
+          for f in FORGED:
+              ok, _, r = ek.verify_proof(ins(good, f, None, before=False))
+              print(('PASS' if ok else 'FAIL') + f' | benign-dup-{f}-after | {r}')
+              fails += not ok
+          ok, _, r = ek.verify_proof(good)
+          print(('PASS' if ok else 'FAIL') + ' | control-untouched')
+          fails += not ok
+          sys.exit(1 if fails else 0)
+          EOF
+
       - name: receipt.html core logic tests (browser verifier vs CLI semantics)
         run: |
           set -euo pipefail
@@ -168,6 +200,22 @@ jobs:
           T('signer header swap rejected', !r.ok && no(r,'signer'));
           r = await core.verifyReceipt('not a receipt', '');
           T('garbage rejected without crashing', !r.ok);
+          // duplicate-field parity with python matrix (c12): forged-first must fail,
+          // benign duplicate-after must pass, on the committed fixture.
+          const fx = fs.readFileSync(REPO + '/proofs/c12-dup-field-fixture.md', 'utf8');
+          const FORGED = { created: '2020-01-01T00:00:00Z', sha256: '0'.repeat(64),
+                           signer: '0x' + 'ab'.repeat(20), signature: '0x' + '11'.repeat(65) };
+          const ins = (md, f, v, before) => { const L = md.split('\n');
+            const i = L.findIndex(l => l.startsWith(f + ':'));
+            L.splice(before ? i : i + 1, 0, before ? f + ': ' + v : L[i]); return L.join('\n'); };
+          for (const [f, v] of Object.entries(FORGED)) {
+            const q = await core.verifyReceipt(ins(fx, f, v, true), '');
+            T('forged-' + f + '-first rejected', !q.ok);
+          }
+          for (const f of Object.keys(FORGED)) {
+            const q = await core.verifyReceipt(ins(fx, f, null, false), '');
+            T('benign-dup-' + f + '-after accepted', q.ok);
+          }
           console.log(fails ? fails + ' FAILURES' : 'receipt.html core OK');
           process.exit(fails ? 1 : 0);
           EOF
