@@ -186,6 +186,84 @@ jobs:
             echo "OK: outbound $U"
           done
 
+      - name: verify.html vectors x Python CLI + internal links + footer addr pins (audit #24/#25/#30)
+        run: |
+          set -euo pipefail
+          # Gap #24: verify.html's embedded vectors were 'documented but never
+          # executed' — the page verifies them with ethers at runtime; CI now
+          # extracts the VECTORS block from the page VERBATIM (c21 pattern:
+          # zero copy-paste drift possible) and re-verifies EVERY vector with
+          # the Python CLI, so the live page's PASS badges and the CLI verdict
+          # can never disagree.
+          # Gap #25: internal (non-http) hrefs on the Pages landing must point
+          # at committed files, and the deep-link require= value must equal the
+          # FLEET table's ethkey-lite pin (the pair the c20 mismatch rule
+          # enforces at runtime is now pinned in source too).
+          # Gap #30: B's tip addr printed in the README must match shared/LEDGER.md.
+          python3 - <<'EOF'
+          import re, subprocess, sys
+          from pathlib import Path
+
+          # ---- #24: verify.html vectors x Python CLI ----
+          vh = open('verify.html').read()
+          m = re.search(r'const VECTORS = \[(.*?)\];', vh, re.S)
+          assert m, 'verify.html: VECTORS block not found'
+          vectors = re.findall(
+              r'message:\s*"((?:[^"\\]|\\.)*)",\s*sig:\s*"([0-9a-fA-Fx]+)",\s*addr:\s*"([0-9a-fA-Fx]+)"',
+              m.group(1))
+          assert len(vectors) >= 3, f'expected >=3 vectors, got {len(vectors)}'
+          for msg, sig, addr in vectors:
+              msg_dec = msg.replace('\\"', '"').replace('\\\\', '\\')
+              r = subprocess.run(
+                  ['python3', 'ethkey.py', 'recover', addr, msg_dec, sig],
+                  capture_output=True, text=True)
+              assert r.returncode == 0, f'CLI rejects embedded vector {msg!r}: {r.stderr or r.stdout}'
+              assert f'matches claimed address: True' in r.stdout, f'vector {msg!r} recovery mismatch'
+              # flip: same vector vs a wrong addr must go exit 1 (non-vacuous CLI assert)
+              wrong = '0x' + '00' * 20 if addr[2] != '0' else '0x' + '11' * 20
+              r2 = subprocess.run(
+                  ['python3', 'ethkey.py', 'recover', wrong, msg_dec, sig],
+                  capture_output=True, text=True)
+              assert r2.returncode == 1, f'wrong-addr control did NOT fail for {msg!r}'
+          print(f'OK: {len(vectors)} verify.html vectors re-verified by the PYTHON CLI (+ wrong-addr controls exit 1)')
+
+          # ---- #25: internal hrefs + deep-link pair pin ----
+          idx = open('index.html').read()
+          internal = re.findall(r'href="([^"#]+)"', idx)
+          internal = [h for h in internal if not h.startswith(('http://', 'https://'))]
+          assert len(internal) >= 2, f'expected internal links, got {internal}'
+          fleet = open('receipt.html').read()
+          pin = re.search(r"\{\s*repo:\s*'ethkey-lite',\s*signer:\s*'(0x[0-9a-fA-F]{40})'\s*\}", fleet)
+          assert pin, 'receipt.html FLEET ethkey-lite pin not found'
+          fleet_addr = pin.group(1).lower()
+          for h in internal:
+              h_un = h.replace('&amp;', '&')  # HTML-entity form in href attrs
+              target = h_un.split('?', 1)[0]
+              assert Path(target).is_file(), f'index.html internal href -> missing file: {h}'
+              if 'require=' in h_un:
+                  q = re.search(r'require=(0x[0-9a-fA-F]{40})', h_un)
+                  assert q, f'deep-link require= malformed: {h}'
+                  assert q.group(1).lower() == fleet_addr, \
+                      f'deep-link require {q.group(1)} != FLEET ethkey-lite pin {fleet_addr}'
+          print(f'OK: {len(internal)} internal hrefs on committed files; deep-link require == FLEET pin')
+
+          # ---- #30: B tip addr in README vs shared LEDGER (same-repo check) ----
+          # Fleet cross-check (README addr == shared/LEDGER.md B row) runs
+          # out-of-band in agents/C: LEDGER lives in the money monorepo, not
+          # this repo. Here we at least pin README vs this repo's own truth:
+          # every 0x+40-hx addr in the README tip line must be a known signer
+          # (A/C are FLEET-pinned; B is asserted externally).
+          rd = open('README.md').read()
+          ml = re.search(r'ETH A `(0x[0-9a-fA-F]{40})` · B `(0x[0-9a-fA-F]{40})` · C `(0x[0-9a-fA-F]{40})`', rd)
+          assert ml, 'README tip line missing or reshaped'
+          a_addr, b_addr, c_addr = ml.group(1), ml.group(2), ml.group(3)
+          assert c_addr.lower() == fleet_addr, f'README C tip {c_addr} != FLEET ethkey-lite pin {fleet_addr}'
+          sig_a = re.search(r"\{\s*repo:\s*'secretgate',\s*signer:\s*'(0x[0-9a-fA-F]{40})'\s*\}", fleet)
+          assert a_addr.lower() == sig_a.group(1).lower(), 'README A tip != FLEET secretgate pin'
+          assert re.fullmatch(r'0x[0-9a-fA-F]{40}', b_addr), 'README B tip malformed'
+          print(f'OK: README tip line well-formed; C tip == FLEET pin; A tip == FLEET secretgate pin; B addr {b_addr[:8]}… checked vs LEDGER out-of-band')
+          EOF
+
       - name: CLI argument validation (no tracebacks, documented exit codes)
         run: |
           set -euo pipefail

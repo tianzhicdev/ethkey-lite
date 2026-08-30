@@ -160,12 +160,31 @@ def sign_message(message: bytes, priv_int: int) -> str:
 
 
 def recover_message(message: bytes, sig_hex: str) -> str:
-    sig = sig_hex.removeprefix('0x')
+    # c25: strictly validate the signature BEFORE recovering. The old code
+    # accepted ANY recovery-id byte (rec_id = v-27 if v>=27 else v), so a
+    # tampered v byte like 0x1a recovered by parity coincidence (-1 & 1 == 0
+    # & 1) while ethers rejects it outright, and out-of-range r/s crashed
+    # downstream with a traceback. Parse errors now raise ValueError with a
+    # clean message (CLI maps it to exit 2; verify_proof maps it to
+    # 'malformed proof').
+    sig = sig_hex.removeprefix('0x').strip()
+    if len(sig) != 130 or any(c not in '0123456789abcdefABCDEF' for c in sig):
+        raise ValueError('signature must be 65 bytes as 130 hex chars (0x prefix optional)')
     r = int(sig[0:64], 16)
     s = int(sig[64:128], 16)
     v = int(sig[128:130], 16)
-    rec_id = v - 27 if v >= 27 else v
-    return checksum_address(_recover_hash(personal_digest(message), r, s, rec_id))
+    if v in (0, 1):
+        rec_id = v
+    elif v in (27, 28):
+        rec_id = v - 27
+    else:
+        raise ValueError(f'invalid recovery id {v}: must be 0, 1, 27, or 28')
+    if not (0 < r < N and 0 < s < N):
+        raise ValueError('signature r/s out of range (must be 1..N-1)')
+    rec = _recover_hash(personal_digest(message), r, s, rec_id)
+    if rec is None:
+        raise ValueError('recovery failed for this signature')
+    return checksum_address(rec)
 
 
 # ---------- selftest ----------
@@ -311,7 +330,11 @@ def main(argv):
             return 2
         print(sign_message(argv[2].encode(), int(pk_hex.removeprefix('0x'), 16)))
     elif cmd == 'recover' and len(argv) == 5:
-        rec = recover_message(argv[3].encode(), argv[4])
+        try:
+            rec = recover_message(argv[3].encode(), argv[4])
+        except ValueError as e:
+            print(f'error: {e}', file=sys.stderr)
+            return 2
         ok = rec.lower() == argv[2].lower().strip()
         print('recovered:', rec)
         print('matches claimed address:', ok)

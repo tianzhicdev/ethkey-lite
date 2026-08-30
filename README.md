@@ -37,7 +37,9 @@ python3 ethkey.py verify p.md --require <addr>  # exit 0 iff sig valid AND signe
 ```
 
 `recover` exits 0 when the recovered signer matches the claimed address, 1
-otherwise — usable in scripts and CI.
+otherwise, 2 when the signature is malformed or carries an invalid recovery
+id / out-of-range r or s (strict input validation, matching ethers.js v6:
+only v ∈ {0,1,27,28} is accepted) — usable in scripts and CI.
 
 Example (public test vector, safe to run):
 
