@@ -77,6 +77,22 @@ const PAYLOAD_BEGIN = '-----BEGIN PAYLOAD-----';
 const PAYLOAD_END = '-----END PAYLOAD-----';
 const PROOF_MAGIC = 'ethkey-lite-proof';
 
+function verKey(name) {
+  // vX.Y(.Z) anywhere in a filename/tag as [major, minor, patch]; files or
+  // tags without a version (e.g. test fixtures) key as [0,0,0] -> sort LAST.
+  const m = String(name).match(/v(\d+)\.(\d+)(?:\.(\d+))?/);
+  return m ? [+m[1], +m[2], +(m[3] || 0)] : [0, 0, 0];
+}
+
+function sortVersionedDesc(names) {
+  // Newest-first by version; lexicographic order breaks between v0.9 and
+  // v0.10, numeric compare does not.
+  return names.slice().sort((a, b) => {
+    const va = verKey(a), vb = verKey(b);
+    return vb[0] - va[0] || vb[1] - va[1] || vb[2] - va[2];
+  });
+}
+
 function parseProof(md) {
   // Mirrors ethkey.py verify_proof: known-key whitelist before payload block,
   // field order irrelevant, unknown lines ignored (injection guard).
@@ -176,11 +192,13 @@ function renderReceipt(result) {
   root.appendChild(sum);
 }
 
-async function runReceiptVerify() {
+async function runReceiptVerify(sourceNote) {
   const md = document.getElementById('rp_input').value;
   const req = document.getElementById('rp_require').value.trim();
   if (!md.trim()) { renderReceipt({ checks: [{ name: 'input', ok: false, detail: 'paste a receipt first' }], ok: false }); return; }
-  renderReceipt(await verifyReceipt(md, req));
+  const res = await verifyReceipt(md, req);
+  if (sourceNote) res.checks.unshift({ name: 'source', ok: true, detail: sourceNote });
+  renderReceipt(res);
 }
 
 async function fetchText(url) {
@@ -190,42 +208,64 @@ async function fetchText(url) {
 }
 
 async function loadSample() {
-  // No hardcoded version: resolve the newest release tag through the GitHub
-  // REST API (Access-Control-Allow-Origin: *, no auth for public repos), then
-  // fetch the receipt committed under that tag from raw.githubusercontent.com
-  // (also CORS-enabled). NOTE: release-asset browser_download_url is NOT used —
-  // its redirect host (release-assets.githubusercontent.com) sends no CORS
-  // header, so a browser fetch of it fails; committed proofs/ files are the
-  // browser-readable canonical copies. Unauth API limit is 60/hr per IP — fine
-  // for a click-driven button, and every failure degrades to a clear message.
-  const tryUrls = [];
-  let tags = [];
-  try {
-    const r = await fetch('https://api.github.com/repos/tianzhicdev/ethkey-lite/contents/proofs', { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    // Newest first by the vX.Y(.Z) in the filename (lexicographic order breaks
-    // between v0.9 and v0.10, numeric compare does not; patch is optional).
-    const ver = n => { const m = n.match(/v(\d+)\.(\d+)(?:\.(\d+))?/); return m ? [+m[1], +m[2], +(m[3] || 0)] : [0, 0, 0]; };
-    tags = (await r.json()).map(f => f.name).filter(n => n.endsWith('.md'))
-      .sort((a, b) => { const va = ver(a), vb = ver(b); return vb[0] - va[0] || vb[1] - va[1] || vb[2] - va[2]; });
-  } catch (e) { /* API down/rate-limited: fall back to the committed default below */ }
-  for (const n of tags) {
-    tryUrls.push('https://raw.githubusercontent.com/tianzhicdev/ethkey-lite/HEAD/proofs/' + n);
-  }
-  tryUrls.push('proofs/v0.4-source.md');
+  // PROVENANCE: the sample is fetched from the LATEST RELEASE TAG, never HEAD.
+  // A receipt committed on main is loadable before its tag exists, which makes
+  // 'latest release receipt' a lie about what was signed-and-tagged; fetching
+  // at the tag means what you load is exactly what the tag froze (c13 audit).
+  // Route: api.github.com /tags -> newest vX.Y tag -> contents/proofs?ref=TAG
+  // -> raw at that TAG. Both API endpoints send Access-Control-Allow-Origin: *
+  // (verified by header inspection). release-asset browser_download_url is
+  // NOT used — its redirect host (release-assets.githubusercontent.com) sends
+  // no CORS header. Unauth limits (60/hr tags+contents) are fine for a
+  // click-driven button; every failure degrades to a clear message. If the
+  // tag route fails entirely, fall back to the HEAD listing, then the
+  // committed v0.4 sample — each fallback is labeled in the output.
+  const API = 'https://api.github.com/repos/tianzhicdev/ethkey-lite';
+  const RAW = 'https://raw.githubusercontent.com/tianzhicdev/ethkey-lite';
   const tried = [];
-  for (const url of tryUrls) {
-    try {
-      const md = await fetchText(url);
-      document.getElementById('rp_input').value = md;
-      runReceiptVerify();
-      return;
-    } catch (e) { tried.push(url.replace(/^https:\/\/raw\.githubusercontent\.com\//, '').slice(0, 60) + ' (' + e.message + ')'); }
-  }
+  const fetchJson = async (url) => {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  };
+  const listingAt = async (ref) => sortVersionedDesc(
+    (await fetchJson(API + '/contents/proofs' + (ref ? '?ref=' + ref : '')))
+      .map(f => f.name).filter(n => n.endsWith('.md') && /v\d+\.\d+/.test(n)));
+  const tryAt = async (ref, files) => {
+    for (const n of files) {
+      const url = RAW + '/' + (ref || 'HEAD') + '/proofs/' + n;
+      try {
+        const md = await fetchText(url);
+        document.getElementById('rp_input').value = md;
+        runReceiptVerify('loaded ' + n + (ref ? ' at tag ' + ref : ' from HEAD (tag route unavailable)'));
+        return true;
+      } catch (e) { tried.push(url.replace(RAW + '/', '') + ' (' + e.message + ')'); }
+    }
+    return false;
+  };
+  // 1) tag-pinned route
+  try {
+    const tags = sortVersionedDesc((await fetchJson(API + '/tags?per_page=100'))
+      .map(t => t.name).filter(n => /v\d+\.\d+/.test(n)));
+    for (const tag of tags) {
+      try { if (await tryAt(tag, await listingAt(tag))) return; }
+      catch (e) { tried.push('contents/proofs?ref=' + tag + ' (' + e.message + ')'); }
+    }
+  } catch (e) { tried.push('tags (' + e.message + ')'); }
+  // 2) HEAD-listing fallback (newer-than-tag receipts; labeled as such above)
+  try { if (await tryAt(null, await listingAt(null))) return; }
+  catch (e) { tried.push('contents/proofs?ref=HEAD (' + e.message + ')'); }
+  // 3) committed in-repo fallback (works offline-ish, same origin as the page)
+  try {
+    const md = await fetchText('proofs/v0.4-source.md');
+    document.getElementById('rp_input').value = md;
+    runReceiptVerify('loaded committed proofs/v0.4-source.md (API route unavailable)');
+    return;
+  } catch (e) { tried.push('proofs/v0.4-source.md (' + e.message + ')'); }
   renderReceipt({ checks: [{ name: 'fetch', ok: false, detail: 'could not load a receipt — tried: ' + tried.join('; ') + '. Paste one manually or pick it from the releases page.' }], ok: false });
 }
 
-document.getElementById('rp_btn').addEventListener('click', runReceiptVerify);
+document.getElementById('rp_btn').addEventListener('click', () => runReceiptVerify());
 document.getElementById('rp_load').addEventListener('click', loadSample);
 </script>
 </body>

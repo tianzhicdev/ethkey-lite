@@ -179,10 +179,18 @@ jobs:
           const m = html.match(/\/\/ ---- CORE BEGIN ----[^\n]*\n([\s\S]*?)\/\/ ---- CORE END ----/);
           if (!m) { console.error('CORE block not found in receipt.html'); process.exit(1); }
           globalThis.ethers = { verifyMessage };
-          const core = new Function(m[1] + '; return { verifyReceipt };')();
+          const core = new Function(m[1] + '; return { verifyReceipt, verKey, sortVersionedDesc };')();
           const good = fs.readFileSync(REPO + '/proofs/v0.4-source.md', 'utf8');
           let fails = 0;
           const T = (n, c, d) => { console.log((c ? 'PASS' : 'FAIL') + ' | ' + n + (d && !c ? ' | ' + d : '')); if (!c) fails++; };
+          // version-sort unit tests (c13: loadSample resolves tags/files by these)
+          {
+            const sv = core.sortVersionedDesc(['v0.4-a.md', 'v0.10-a.md', 'v0.9-a.md', 'v0.10.2-a.md', 'fixture-no-ver.md']);
+            T('sort: v0.10.2 > v0.10 > v0.9 > v0.4 > no-version',
+              sv.join(',') === 'v0.10.2-a.md,v0.10-a.md,v0.9-a.md,v0.4-a.md,fixture-no-ver.md', sv.join(','));
+            const k = core.verKey('c12-dup-field-fixture.md');
+            T('verKey: no vX.Y keys as [0,0,0]', k.join() === '0,0,0', k.join());
+          }
           const has = (r, n) => r.checks.some(c => c.name === n && c.ok);
           const no  = (r, n) => r.checks.some(c => c.name === n && !c.ok);
           let r = await core.verifyReceipt(good, '');

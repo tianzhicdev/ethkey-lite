@@ -58,7 +58,9 @@ anyone, no trust required:
 python3 ethkey.py verify proofs/v0.4-source.md --require 0xf232dcdc177b53981b4d805a48c79f239db8d0f9
 ```
 
-Receipts are self-contained markdown (payload embedded base64), so they work
+Receipts are self-contained markdown (payload embedded base64 between the
+exact marker lines `-----BEGIN PAYLOAD-----` / `-----END PAYLOAD-----` — match
+those verbatim if you write a third-party parser), so they work
 as pinned artifacts in any repo. The signature covers the canonical string
 `ethkey-lite-proof v1\ncreated:<t>\nsha256:<hash>` via `personal_sign`, so
 `ethers.verifyMessage()` verifies it too — no Python required.
@@ -108,7 +110,8 @@ triples.
 
 Open [`receipt.html`](receipt.html) to verify a **signed receipt** end-to-end
 in the browser — paste any `ethkey-lite-proof v1` markdown (or click "Load
-latest release receipt" to fetch this repo's newest committed proof) and it
+latest release receipt" to fetch this repo's newest receipt **at the newest
+release tag** — provenance-pinned, never HEAD) and it
 checks payload sha256 integrity (WebCrypto), the EIP-191 signature, and the
 signer address, with the same verdicts as `ethkey.py verify --require`. Verify-only: nothing is
 uploaded and nothing is signed. Its core parser is unit-tested in CI under
