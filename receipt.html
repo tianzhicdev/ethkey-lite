@@ -117,7 +117,13 @@ function parseParams(sp) {
   // dropped — so a crafted link can never redirect the loader to an attacker's
   // repo or prefill a bogus required signer. Worst case the verification (or a
   // paste-verify) FAILS, never falsely passes.
-  const out = { load: false, require: '', badRequire: false, repo: '', badRepo: false };
+  // c20 mismatch rule: when BOTH repo and require name fleet shapes but
+  // disagree with the pinned FLEET table (e.g. repo=secretgate&require=<C addr>),
+  // the pair is REFUSED outright (badMismatch) instead of auto-running a
+  // verification against a signer the page already knows is wrong for that
+  // repo. The deep link is what a guide hands readers as a positive control —
+  // a mismatched prefilled pair is exactly the shape of a confusion attack.
+  const out = { load: false, require: '', badRequire: false, repo: '', badRepo: false, badMismatch: false };
   if (String(sp.get('load') || '') === 'latest') out.load = true;
   const rq = String(sp.get('require') || '').trim();
   if (rq) {
@@ -128,6 +134,10 @@ function parseParams(sp) {
   if (rp) {
     if (FLEET.some(f => f.repo === rp)) out.repo = rp;
     else out.badRepo = true;
+  }
+  if (out.repo && out.require) {
+    const pin = FLEET.find(f => f.repo === out.repo).signer;
+    if (pin.toLowerCase() !== out.require.toLowerCase()) out.badMismatch = true;
   }
   return out;
 }
@@ -385,12 +395,15 @@ document.getElementById('rp_fleet').addEventListener('click', () => loadFleet())
 // one-click positive control. No params = identical page as before.
 (async function boot() {
   const p = parseParams(new URLSearchParams(location.search));
-  if (p.require) document.getElementById('rp_require').value = p.require;
-  if (p.badRequire || p.badRepo) {
-    // Malformed param: ambiguous/crafted link — surface it, don't auto-run.
+  if (p.require && !p.badRequire && !p.badMismatch) document.getElementById('rp_require').value = p.require;
+  if (p.badRequire || p.badRepo || p.badMismatch) {
+    // Malformed/mismatched param: ambiguous/crafted link — surface it, don't auto-run.
     renderReceipt({ checks: [{ name: 'url params', ok: false,
       detail: 'URL param refused: ' + [p.badRequire ? '?require= is not a valid 0x+40-hex address' : null,
-        p.badRepo ? '?repo= is not a known fleet repo (allowed: ' + FLEET.map(f => f.repo).join(', ') + ')' : null]
+        p.badRepo ? '?repo= is not a known fleet repo (allowed: ' + FLEET.map(f => f.repo).join(', ') + ')' : null,
+        p.badMismatch ? '?repo=' + p.repo + ' is pinned to signer ' +
+          FLEET.find(f => f.repo === p.repo).signer + ', but ?require= names ' + p.require +
+          ' — the pair disagrees with the pinned FLEET table' : null]
         .filter(Boolean).join('; ') + ' — ignored, nothing auto-loaded' }], ok: false });
   } else {
     if (p.require && !p.load)

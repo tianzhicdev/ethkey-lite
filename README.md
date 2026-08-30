@@ -146,6 +146,11 @@ the *positive control* in our
 accepted only if it is exactly `0x` + 40 hex chars (anything else is refused
 with a visible note and nothing auto-runs), so a crafted link can never
 pre-fill a fake "expected signer" that would make a wrong receipt look right.
+If a link pairs `repo=` with a `require=` address that disagrees with the
+page's pinned trust-anchor table for that repo (e.g. `repo=secretgate` plus
+your own address), the whole pair is refused with an explanation naming the
+pinned signer — the page will not auto-run a verification it already knows is
+mis-signed, even for a willing clicker.
 
 Preferring a sibling repo's release? Use the fleet deep link with `&repo=`:
 [verify secretgate's newest receipt](https://tianzhicdev.github.io/ethkey-lite/receipt.html?load=latest&repo=secretgate&require=0xFD4090e27C1f946Ff01a265cAa7d4ACA662acC15) <!-- secretgate: allow public tip addr -->
