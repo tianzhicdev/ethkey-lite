@@ -97,7 +97,10 @@ output. No secrets, no network beyond pip.
 > form (green daily via schedule + dispatch) — and a live dispatch pointed at
 > the committed forged fixture FAILS the `verify` job and SKIPS the output
 > consumer, so failure and the `signer` output are both proven to propagate
-> through `needs:` exactly as documented.
+> through `needs:` exactly as documented. Output-shape gotcha the caller job
+> caught on its first live run: `signer` comes back in EIP-55 checksummed
+> casing — compare it case-folded (the `require:` match *inside* the gate is
+> already lowercase-compared, so the gate itself is casing-safe).
 
 > Why a reusable workflow and not the old composite action? GitHub only
 > resolves `uses: owner/repo/path@ref` for actions at a repo's **root or a

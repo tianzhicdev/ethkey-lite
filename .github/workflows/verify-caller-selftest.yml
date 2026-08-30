@@ -64,5 +64,11 @@ jobs:
           set -euo pipefail
           echo "caller saw outputs.signer = [$SIGNER]"
           test -n "$SIGNER" || { echo "FAIL: reusable workflow produced empty signer output"; exit 1; }
-          test "$SIGNER" = "0xf232dcdc177b53981b4d805a48c79f239db8d0f9" || { echo "FAIL: signer output != C wallet addr"; exit 1; }
-          echo "OK: workflow_call inputs + signer job-output wiring proven from the caller side"
+          # CONTRACT NOTE (found by this job's first live run, 33336191895):
+          # the output carries the tool's EIP-55 CHECKSUMMED casing
+          # (0xf232Dcdc…), while `require` matching inside verify-release is
+          # lowercase-compared. Callers must case-fold before comparing —
+          # a byte-equality assert against a lowercase addr dies here red.
+          LOWER=$(printf '%s' "$SIGNER" | tr 'A-Z' 'a-z')
+          test "$LOWER" = "0xf232dcdc177b53981b4d805a48c79f239db8d0f9" || { echo "FAIL: signer output != C wallet addr (case-folded)"; exit 1; }
+          echo "OK: workflow_call inputs + signer job-output wiring proven from the caller side (case-folded compare)"
