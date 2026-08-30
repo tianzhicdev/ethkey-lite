@@ -53,6 +53,7 @@ signed here — verify-only. Matches <code>ethkey.py verify</code> and GitHub Ac
   <div>
     <button id="rp_btn">Verify receipt</button>
     <button id="rp_load" class="secondary">Load latest release receipt</button>
+    <button id="rp_fleet" class="secondary">Verify ALL fleet repos</button>
   </div>
 </div>
 <div id="rp_output"></div>
@@ -93,19 +94,40 @@ function sortVersionedDesc(names) {
   });
 }
 
+// Hardcoded fleet trust anchors (c16 fleet board): repo -> expected signer
+// address, copied from the team LEDGER. CI asserts these values verbatim, so
+// a silent swap in the page is a test failure, not a stealth edit.
+const FLEET = [
+  { repo: 'ethkey-lite', signer: '0xf232dcdc177b53981b4d805a48c79f239db8d0f9' },
+  { repo: 'secretgate', signer: '0xfd4090e27c1f946ff01a265caa7d4aca662acc15' },
+  { repo: 'hookpack', signer: '0xfd4090e27c1f946ff01a265caa7d4aca662acc15' },
+  { repo: 'secretgate-action', signer: '0xfd4090e27c1f946ff01a265caa7d4aca662acc15' }
+];
+
+function isReceiptName(n) {
+  // Receipt files are 'vX.Y(.Z)-*.md'; test fixtures and prose files are not.
+  return String(n).endsWith('.md') && /v\d+\.\d+/.test(String(n));
+}
+
 function parseParams(sp) {
-  // Deep-link params (?load=latest&require=0x…). Pure + CI-tested because the
-  // URL is untrusted input, same class as the pasted receipt. Rules: load is
+  // Deep-link params (?load=latest&require=0x…&repo=NAME). Pure + CI-tested because
+  // the URL is untrusted input, same class as the pasted receipt. Rules: load is
   // honored only when exactly 'latest'; require must be a well-formed 0x+40hex
-  // or it is dropped, so a crafted link can never prefill a bogus required
-  // signer — worst case the verification (or a paste-verify) FAILS, never
-  // falsely passes.
-  const out = { load: false, require: '', badRequire: false };
+  // or it is dropped; repo must be on the hardcoded FLEET allowlist or it is
+  // dropped — so a crafted link can never redirect the loader to an attacker's
+  // repo or prefill a bogus required signer. Worst case the verification (or a
+  // paste-verify) FAILS, never falsely passes.
+  const out = { load: false, require: '', badRequire: false, repo: '', badRepo: false };
   if (String(sp.get('load') || '') === 'latest') out.load = true;
   const rq = String(sp.get('require') || '').trim();
   if (rq) {
     if (/^0x[0-9a-fA-F]{40}$/.test(rq)) out.require = rq;
     else out.badRequire = true;
+  }
+  const rp = String(sp.get('repo') || '').trim();
+  if (rp) {
+    if (FLEET.some(f => f.repo === rp)) out.repo = rp;
+    else out.badRepo = true;
   }
   return out;
 }
@@ -190,9 +212,7 @@ async function verifyReceipt(md, requireAddr) {
 }
 // ---- CORE END ----
 
-function renderReceipt(result) {
-  const root = document.getElementById('rp_output');
-  root.innerHTML = '';
+function renderReceiptInto(root, result) {
   result.checks.forEach(c => {
     const div = document.createElement('div');
     div.className = 'card';
@@ -207,6 +227,18 @@ function renderReceipt(result) {
   sum.innerHTML = '<span class="badge ' + (result.ok ? 'pass' : 'fail') + '">' +
     (result.ok ? 'RECEIPT VALID' : 'RECEIPT INVALID') + '</span>';
   root.appendChild(sum);
+}
+
+function renderReceipt(result) {
+  const root = document.getElementById('rp_output');
+  root.innerHTML = '';
+  renderReceiptInto(root, result);
+}
+
+function renderMany(results) {
+  const root = document.getElementById('rp_output');
+  root.innerHTML = '';
+  results.forEach(res => renderReceiptInto(root, res));
 }
 
 async function runReceiptVerify(sourceNote) {
@@ -224,8 +256,8 @@ async function fetchText(url) {
   return r.text();
 }
 
-async function loadSample() {
-  // PROVENANCE: the sample is fetched from the LATEST RELEASE TAG, never HEAD.
+async function collectReceipts(repoName) {
+  // PROVENANCE: receipts are fetched from the LATEST RELEASE TAG, never HEAD.
   // A receipt committed on main is loadable before its tag exists, which makes
   // 'latest release receipt' a lie about what was signed-and-tagged; fetching
   // at the tag means what you load is exactly what the tag froze (c13 audit).
@@ -237,8 +269,15 @@ async function loadSample() {
   // click-driven button; every failure degrades to a clear message. If the
   // tag route fails entirely, fall back to the HEAD listing, then the
   // committed v0.4 sample — each fallback is labeled in the output.
-  const API = 'https://api.github.com/repos/tianzhicdev/ethkey-lite';
-  const RAW = 'https://raw.githubusercontent.com/tianzhicdev/ethkey-lite';
+  // repoName (c16 fleet board): must be a FLEET entry (parseParams enforces
+  // that for URLs); verification auto-requires that repo's pinned signer, and
+  // EVERY receipt of the newest version is verified (repos can ship >1 receipt
+  // per release, e.g. secretgate-action). Returns { results, tried, fallback }.
+  const entry = FLEET.find(f => f.repo === repoName) || null;
+  const repo = entry ? entry.repo : 'ethkey-lite';
+  const requireAddr = entry ? entry.signer : '';
+  const API = 'https://api.github.com/repos/tianzhicdev/' + repo;
+  const RAW = 'https://raw.githubusercontent.com/tianzhicdev/' + repo;
   const tried = [];
   const fetchJson = async (url) => {
     const r = await fetch(url, { cache: 'no-store' });
@@ -247,60 +286,120 @@ async function loadSample() {
   };
   const listingAt = async (ref) => sortVersionedDesc(
     (await fetchJson(API + '/contents/proofs' + (ref ? '?ref=' + ref : '')))
-      .map(f => f.name).filter(n => n.endsWith('.md') && /v\d+\.\d+/.test(n)));
+      .map(f => f.name).filter(isReceiptName));
   const tryAt = async (ref, files) => {
-    for (const n of files) {
+    // Verify EVERY receipt sharing the newest version (multi-receipt releases);
+    // older-tag walk-down only happens when the newest version 404s entirely.
+    const newest = files.length ? verKey(files[0]) : null;
+    const sameVer = files.filter(n => {
+      const k = verKey(n);
+      return k[0] === newest[0] && k[1] === newest[1] && k[2] === newest[2];
+    });
+    const results = [];
+    for (const n of sameVer) {
       const url = RAW + '/' + (ref || 'HEAD') + '/proofs/' + n;
       try {
         const md = await fetchText(url);
-        document.getElementById('rp_input').value = md;
-        runReceiptVerify('loaded ' + n + (ref ? ' at tag ' + ref : ' from HEAD (tag route unavailable)'));
-        return true;
+        const res = await verifyReceipt(md, requireAddr);
+        const src = repo + '/' + n + (ref ? ' @ tag ' + ref : ' from HEAD (tag route unavailable)');
+        res.checks.unshift({ name: 'source', ok: true, detail: src });
+        results.push(res);
       } catch (e) { tried.push(url.replace(RAW + '/', '') + ' (' + e.message + ')'); }
     }
-    return false;
+    return results.length ? { results, fallback: !ref } : null;
   };
   // 1) tag-pinned route
   try {
     const tags = sortVersionedDesc((await fetchJson(API + '/tags?per_page=100'))
       .map(t => t.name).filter(n => /v\d+\.\d+/.test(n)));
     for (const tag of tags) {
-      try { if (await tryAt(tag, await listingAt(tag))) return; }
-      catch (e) { tried.push('contents/proofs?ref=' + tag + ' (' + e.message + ')'); }
+      try {
+        const hit = await tryAt(tag, await listingAt(tag));
+        if (hit) return { results: hit.results, tried };
+      } catch (e) { tried.push('contents/proofs?ref=' + tag + ' (' + e.message + ')'); }
     }
   } catch (e) { tried.push('tags (' + e.message + ')'); }
   // 2) HEAD-listing fallback (newer-than-tag receipts; labeled as such above)
-  try { if (await tryAt(null, await listingAt(null))) return; }
-  catch (e) { tried.push('contents/proofs?ref=HEAD (' + e.message + ')'); }
-  // 3) committed in-repo fallback (works offline-ish, same origin as the page)
   try {
-    const md = await fetchText('proofs/v0.4-source.md');
-    document.getElementById('rp_input').value = md;
-    runReceiptVerify('loaded committed proofs/v0.4-source.md (API route unavailable)');
-    return;
-  } catch (e) { tried.push('proofs/v0.4-source.md (' + e.message + ')'); }
-  renderReceipt({ checks: [{ name: 'fetch', ok: false, detail: 'could not load a receipt — tried: ' + tried.join('; ') + '. Paste one manually or pick it from the releases page.' }], ok: false });
+    const hit = await tryAt(null, await listingAt(null));
+    if (hit) return { results: hit.results, tried };
+  } catch (e) { tried.push('contents/proofs?ref=HEAD (' + e.message + ')'); }
+  // 3) committed in-repo fallback (works offline-ish, same origin as the page)
+  if (repo === 'ethkey-lite') {
+    try {
+      const md = await fetchText('proofs/v0.4-source.md');
+      const res = await verifyReceipt(md, requireAddr);
+      res.checks.unshift({ name: 'source', ok: true, detail: 'loaded committed proofs/v0.4-source.md (API route unavailable)' });
+      return { results: [res], tried };
+    } catch (e) { tried.push('proofs/v0.4-source.md (' + e.message + ')'); }
+  }
+  return { results: [], tried };
+}
+
+async function loadSample(repoName) {
+  const hit = await collectReceipts(repoName);
+  if (hit.results.length) { renderMany(hit.results); return; }
+  renderReceipt({ checks: [{ name: 'fetch', ok: false, detail: 'could not load a receipt — tried: ' + hit.tried.join('; ') + '. Paste one manually or pick it from the releases page.' }], ok: false });
+}
+
+async function loadFleet() {
+  // c16 fleet board: one click verifies the newest tagged receipt(s) of EVERY
+  // fleet repo against its hardcoded signer. A GitHub outage degrades to a
+  // visible fetch-failure card, never a blank output or a fake PASS.
+  const root = document.getElementById('rp_output');
+  root.innerHTML = '';
+  const prog = document.createElement('div');
+  prog.className = 'card';
+  prog.innerHTML = '<span class="badge pass">running</span> verifying all fleet repos…';
+  root.appendChild(prog);
+  let total = 0, okCount = 0;
+  const blocks = [];
+  for (const f of FLEET) {
+    const hit = await collectReceipts(f.repo);
+    let results = hit.results;
+    if (!results.length) {
+      results = [{ checks: [{ name: 'fetch', ok: false,
+        detail: f.repo + ': could not load any receipt — tried: ' + (hit.tried.join('; ') || 'nothing') }], ok: false }];
+    }
+    results.forEach(res => { total++; if (res.ok) okCount++; });
+    blocks.push(results);
+  }
+  root.innerHTML = '';
+  blocks.forEach(results => results.forEach(res => renderReceiptInto(root, res)));
+  const sum = document.createElement('div');
+  sum.className = 'card';
+  sum.innerHTML = '<span class="badge ' + (okCount === total && total > 0 ? 'pass' : 'fail') + '">' +
+    (okCount === total && total > 0 ? 'ALL FLEET RECEIPTS VALID' : 'FLEET CHECK INCOMPLETE') +
+    '</span> ' + okCount + '/' + total + ' receipts valid (each required its repo\u2019s pinned signer)';
+  root.appendChild(sum);
 }
 
 document.getElementById('rp_btn').addEventListener('click', () => runReceiptVerify());
-document.getElementById('rp_load').addEventListener('click', loadSample);
+document.getElementById('rp_load').addEventListener('click', () => loadSample('ethkey-lite'));
+document.getElementById('rp_fleet').addEventListener('click', () => loadFleet());
 
-// Deep-link boot: ?load=latest auto-runs the tag-pinned loader; ?require=0x…
-// pre-fills the required signer (only if well-formed — see parseParams).
+// Deep-link boot: ?load=latest auto-runs the tag-pinned loader (optionally
+// ?repo=NAME from the hardcoded FLEET allowlist); ?require=0x… pre-fills the
+// required signer (only if well-formed — see parseParams).
 // Used by external guides (bounty-rails guide Test 9) to hand readers a
 // one-click positive control. No params = identical page as before.
 (async function boot() {
   const p = parseParams(new URLSearchParams(location.search));
   if (p.require) document.getElementById('rp_require').value = p.require;
-  if (p.badRequire) {
-    // Malformed ?require: ambiguous/crafted link — surface it, don't auto-run.
-    renderReceipt({ checks: [{ name: 'require param', ok: false,
-      detail: 'URL ?require= is not a valid 0x+40-hex address — ignored, nothing auto-loaded' }], ok: false });
+  if (p.badRequire || p.badRepo) {
+    // Malformed param: ambiguous/crafted link — surface it, don't auto-run.
+    renderReceipt({ checks: [{ name: 'url params', ok: false,
+      detail: 'URL param refused: ' + [p.badRequire ? '?require= is not a valid 0x+40-hex address' : null,
+        p.badRepo ? '?repo= is not a known fleet repo (allowed: ' + FLEET.map(f => f.repo).join(', ') + ')' : null]
+        .filter(Boolean).join('; ') + ' — ignored, nothing auto-loaded' }], ok: false });
   } else {
     if (p.require && !p.load)
       renderReceipt({ checks: [{ name: 'require param', ok: true,
         detail: 'required signer prefilled from URL: ' + p.require + ' — paste a receipt (or add &load=latest) to verify against it' }], ok: true });
-    if (p.load) await loadSample();
+    if (p.repo && !p.load)
+      renderReceipt({ checks: [{ name: 'repo param', ok: true,
+        detail: '?repo=' + p.repo + ' noted — add &load=latest to load+verify its newest release receipt against the pinned signer' }], ok: true });
+    if (p.load) await loadSample(p.repo || 'ethkey-lite');
   }
 })();
 </script>

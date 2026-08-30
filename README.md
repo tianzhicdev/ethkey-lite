@@ -128,6 +128,16 @@ accepted only if it is exactly `0x` + 40 hex chars (anything else is refused
 with a visible note and nothing auto-runs), so a crafted link can never
 pre-fill a fake "expected signer" that would make a wrong receipt look right.
 
+Fleet board: `receipt.html?load=latest&repo=<name>` (or the "Verify ALL fleet
+repos" button) loads and verifies the newest release-tag receipts of sibling
+projects too — `ethkey-lite`, `secretgate`, `hookpack`, `secretgate-action` —
+each against a **hardcoded pinned signer address** (the page's own trust
+anchors, asserted verbatim in CI). `repo` is honored only if it names one of
+those four, so a link can never redirect the loader to an arbitrary repo.
+Repositories that ship more than one receipt per release (e.g.
+`secretgate-action`: `action.yml` + `summarize.py`) get ALL receipts of the
+newest version verified, each standalone.
+
 ## Security notes
 
 - `new` prints the private key to stdout and writes nothing to disk.
