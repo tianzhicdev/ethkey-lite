@@ -1,0 +1,68 @@
+name: selftest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  dogfood:
+    runs-on: ubuntu-latest
+    env:
+      # Well-known public test key (all 0x46 bytes). Safe to expose: it is a
+      # published test vector, not a real key.
+      ETHKEY_PK: "0x4646464646464646464646464646464646464646464646464646464646464646"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependency
+        run: pip install pycryptodome
+
+      - name: Run built-in selftest
+        run: python3 ethkey.py selftest
+
+      - name: Sign / recover round-trip
+        run: |
+          set -euo pipefail
+          MSG='CI roundtrip'
+          SIG=$(python3 ethkey.py sign "$MSG")
+          echo "signature: $SIG"
+          ADDR=$(python3 ethkey.py address "$ETHKEY_PK")
+          echo "address: $ADDR"
+          # recover exits 0 when the claimed address matches, 1 when it does not
+          python3 ethkey.py recover "$ADDR" "$MSG" "$SIG"
+          # negative control: recovering against a wrong address must fail (exit 1)
+          if python3 ethkey.py recover "0x0000000000000000000000000000000000000000" "$MSG" "$SIG"; then
+            echo "FAIL: recover matched a wrong address"
+            exit 1
+          fi
+          echo "round-trip and negative control OK"
+
+      - name: Cross-check signatures against ethers.js v6
+        run: |
+          set -euo pipefail
+          MSG='CI roundtrip'
+          SIG=$(python3 ethkey.py sign "$MSG")
+          ADDR=$(python3 ethkey.py address "$ETHKEY_PK")
+          SCRATCH=$(mktemp -d)
+          cd "$SCRATCH"
+          npm init -y >/dev/null
+          npm install ethers@6 --no-audit --no-fund >/dev/null
+          node -e 'const { ethers } = require("ethers");
+            const [msg, sig, addr] = process.argv.slice(1);
+            const recovered = ethers.verifyMessage(msg, sig);
+            console.log("ethers.verifyMessage:", recovered);
+            if (recovered.toLowerCase() !== addr.toLowerCase()) {
+              console.error("FAIL: ethers recovered", recovered, "expected", addr);
+              process.exit(1);
+            }
+            console.log("ethers.js v6 cross-check OK");' "$MSG" "$SIG" "$ADDR"

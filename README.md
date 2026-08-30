@@ -43,6 +43,13 @@ $ ETHKEY_PK=*** '464646464646464646464646464646464646464646464646464646464646464
 0x78dc24...42ff1b   # byte-identical to ethers.js signMessage
 ```
 
+## Browser verification
+
+Open [`verify.html`](verify.html) in a browser to cross-check the embedded
+`ethkey.py` signatures against `ethers.verifyMessage()` (ethers v6 from CDN),
+plus an interactive verify-only box for arbitrary message/signature/address
+triples.
+
 ## Security notes
 
 - `new` prints the private key to stdout and writes nothing to disk.
