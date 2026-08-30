@@ -53,7 +53,7 @@ on:
         description: Expected signer address
         required: true
         type: string
-        default: 0xf232dcdc177b53981b4d805a48c79f239db8d0f9
+        default: "0xf232dcdc177b53981b4d805a48c79f239db8d0f9"
       ethkey-ref:
         description: ethkey-lite ref for the verifier tool
         required: false
