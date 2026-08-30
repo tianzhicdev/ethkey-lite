@@ -82,10 +82,24 @@ jobs:
       - name: Resolve ethkey-lite ref
         id: ref
         shell: bash
+        # Injection hardening: never interpolate ${{ }} straight into a run
+        # script — pass it through env instead (GitHub's documented rule), and
+        # reject refs with shell-unsafe characters before checkout sees them.
+        env:
+          IN_REF: ${{ inputs.ethkey-ref }}
+          EVT_REF: ${{ github.event.inputs.ethkey-ref }}
+          SELF_REF: ${{ github.ref_name }}
         run: |
-          R="${{ inputs.ethkey-ref }}"
-          if [ -z "$R" ]; then R="${{ github.event.inputs.ethkey-ref }}"; fi
-          if [ -z "$R" ]; then R="${{ github.ref_name }}"; fi
+          set -euo pipefail
+          R="$IN_REF"
+          if [ -z "$R" ]; then R="$EVT_REF"; fi
+          if [ -z "$R" ]; then R="$SELF_REF"; fi
+          case "$R" in
+            *[!A-Za-z0-9._/-]*)
+              echo "error: ethkey-ref contains shell-unsafe characters: $R" >&2
+              exit 2
+              ;;
+          esac
           echo "ref=$R" >> "$GITHUB_OUTPUT"
 
       - name: Checkout ethkey-lite (verifier tool)
