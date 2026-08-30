@@ -264,11 +264,23 @@ jobs:
           python3 - <<'EOF'
           import hashlib, json, os, re, sys, urllib.request
           def get(u, raw=False):
-              req = urllib.request.Request(
-                  u, headers={'User-Agent': 'ethkey-lite-selftest',
-                              'Accept': 'application/vnd.github+json'})
-              d = urllib.request.urlopen(req, timeout=30).read()
-              return d if raw else json.loads(d)
+              # 1-attempt fetch went red on the runner with a transient
+              # 504 from the asset CDN (c30): a flake must not flip the
+              # receipt-parity gate. 3 attempts, backoff, then die loud.
+              import time
+              last = None
+              for attempt in range(3):
+                  try:
+                      req = urllib.request.Request(
+                          u, headers={'User-Agent': 'ethkey-lite-selftest',
+                                      'Accept': 'application/vnd.github+json'})
+                      d = urllib.request.urlopen(req, timeout=30).read()
+                      return d if raw else json.loads(d)
+                  except Exception as e:
+                      last = e
+                      if attempt < 2:
+                          time.sleep(2 ** attempt * 3)
+              raise SystemExit(f'FAIL: fetch failed after 3 attempts ({u}): {last}')
           rel = get('https://api.github.com/repos/tianzhicdev/'
                     'ethkey-lite/releases?per_page=100')
           assert rel, 'FAIL: repo reports zero releases'
