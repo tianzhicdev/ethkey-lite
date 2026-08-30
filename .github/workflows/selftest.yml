@@ -89,9 +89,14 @@ jobs:
           # ethers cross-check of the untampered signature over the canonical string
           rm proof.md
           python3 ethkey.py proof --file ethkey.py --note "CI proof" --out proof.md
+          PROOF=$PWD/proof.md
+          SCRATCH=$(mktemp -d)
+          cd "$SCRATCH"
+          npm init -y >/dev/null
+          npm install ethers@6 --no-audit --no-fund >/dev/null
           node -e 'const { ethers } = require("ethers");
             const fs = require("fs");
-            const md = fs.readFileSync("proof.md", "utf8");
+            const md = fs.readFileSync(process.argv[1], "utf8");
             const g = (k) => md.match(new RegExp("^" + k + ": (.+)$", "m"))[1].trim();
             const canon = `ethkey-lite-proof v1\ncreated:${g("created")}\nsha256:${g("sha256")}`;
             const rec = ethers.verifyMessage(canon, g("signature"));
@@ -100,4 +105,4 @@ jobs:
               console.error("FAIL: ethers proof signer mismatch");
               process.exit(1);
             }
-            console.log("ethers proof cross-check OK");'
+            console.log("ethers proof cross-check OK");' "$PROOF"
