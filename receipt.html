@@ -93,6 +93,23 @@ function sortVersionedDesc(names) {
   });
 }
 
+function parseParams(sp) {
+  // Deep-link params (?load=latest&require=0x…). Pure + CI-tested because the
+  // URL is untrusted input, same class as the pasted receipt. Rules: load is
+  // honored only when exactly 'latest'; require must be a well-formed 0x+40hex
+  // or it is dropped, so a crafted link can never prefill a bogus required
+  // signer — worst case the verification (or a paste-verify) FAILS, never
+  // falsely passes.
+  const out = { load: false, require: '', badRequire: false };
+  if (String(sp.get('load') || '') === 'latest') out.load = true;
+  const rq = String(sp.get('require') || '').trim();
+  if (rq) {
+    if (/^0x[0-9a-fA-F]{40}$/.test(rq)) out.require = rq;
+    else out.badRequire = true;
+  }
+  return out;
+}
+
 function parseProof(md) {
   // Mirrors ethkey.py verify_proof: known-key whitelist before payload block,
   // field order irrelevant, unknown lines ignored (injection guard).
@@ -267,6 +284,25 @@ async function loadSample() {
 
 document.getElementById('rp_btn').addEventListener('click', () => runReceiptVerify());
 document.getElementById('rp_load').addEventListener('click', loadSample);
+
+// Deep-link boot: ?load=latest auto-runs the tag-pinned loader; ?require=0x…
+// pre-fills the required signer (only if well-formed — see parseParams).
+// Used by external guides (bounty-rails guide Test 9) to hand readers a
+// one-click positive control. No params = identical page as before.
+(async function boot() {
+  const p = parseParams(new URLSearchParams(location.search));
+  if (p.require) document.getElementById('rp_require').value = p.require;
+  if (p.badRequire) {
+    // Malformed ?require: ambiguous/crafted link — surface it, don't auto-run.
+    renderReceipt({ checks: [{ name: 'require param', ok: false,
+      detail: 'URL ?require= is not a valid 0x+40-hex address — ignored, nothing auto-loaded' }], ok: false });
+  } else {
+    if (p.require && !p.load)
+      renderReceipt({ checks: [{ name: 'require param', ok: true,
+        detail: 'required signer prefilled from URL: ' + p.require + ' — paste a receipt (or add &load=latest) to verify against it' }], ok: true });
+    if (p.load) await loadSample();
+  }
+})();
 </script>
 </body>
 </html>

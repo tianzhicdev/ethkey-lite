@@ -118,6 +118,14 @@ uploaded and nothing is signed. Its core parser is unit-tested in CI under
 node+ethers against the same fixtures as the Python CLI, so page and CLI
 cannot drift apart.
 
+Deep links: `receipt.html?load=latest&require=0x<40hex>` auto-loads the newest
+release-tag receipt and verifies it against the required signer in one click —
+what a vetting guide links as a *positive control* ("if a bounty pays in
+signed receipts, this is what real looks like"). The `require` param is
+accepted only if it is exactly `0x` + 40 hex chars (anything else is refused
+with a visible note and nothing auto-runs), so a crafted link can never
+pre-fill a fake "expected signer" that would make a wrong receipt look right.
+
 ## Security notes
 
 - `new` prints the private key to stdout and writes nothing to disk.
