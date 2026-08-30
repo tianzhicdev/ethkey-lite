@@ -52,7 +52,7 @@ signed here — verify-only. Matches <code>ethkey.py verify</code> and GitHub Ac
   <input id="rp_require" placeholder="0xf232Dcdc177b53981b4D805A48C79F239DB8D0F9">
   <div>
     <button id="rp_btn">Verify receipt</button>
-    <button id="rp_load" class="secondary">Load v0.4 release receipt</button>
+    <button id="rp_load" class="secondary">Load latest release receipt</button>
   </div>
 </div>
 <div id="rp_output"></div>
@@ -183,15 +183,46 @@ async function runReceiptVerify() {
   renderReceipt(await verifyReceipt(md, req));
 }
 
+async function fetchText(url) {
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.text();
+}
+
 async function loadSample() {
+  // No hardcoded version: resolve the newest release tag through the GitHub
+  // REST API (Access-Control-Allow-Origin: *, no auth for public repos), then
+  // fetch the receipt committed under that tag from raw.githubusercontent.com
+  // (also CORS-enabled). NOTE: release-asset browser_download_url is NOT used —
+  // its redirect host (release-assets.githubusercontent.com) sends no CORS
+  // header, so a browser fetch of it fails; committed proofs/ files are the
+  // browser-readable canonical copies. Unauth API limit is 60/hr per IP — fine
+  // for a click-driven button, and every failure degrades to a clear message.
+  const tryUrls = [];
+  let tags = [];
   try {
-    const r = await fetch('proofs/v0.4-source.md', { cache: 'no-store' });
+    const r = await fetch('https://api.github.com/repos/tianzhicdev/ethkey-lite/contents/proofs', { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    document.getElementById('rp_input').value = await r.text();
-    runReceiptVerify();
-  } catch (e) {
-    renderReceipt({ checks: [{ name: 'fetch', ok: false, detail: 'could not load sample: ' + e.message }], ok: false });
+    // Newest first by the vX.Y(.Z) in the filename (lexicographic order breaks
+    // between v0.9 and v0.10, numeric compare does not; patch is optional).
+    const ver = n => { const m = n.match(/v(\d+)\.(\d+)(?:\.(\d+))?/); return m ? [+m[1], +m[2], +(m[3] || 0)] : [0, 0, 0]; };
+    tags = (await r.json()).map(f => f.name).filter(n => n.endsWith('.md'))
+      .sort((a, b) => { const va = ver(a), vb = ver(b); return vb[0] - va[0] || vb[1] - va[1] || vb[2] - va[2]; });
+  } catch (e) { /* API down/rate-limited: fall back to the committed default below */ }
+  for (const n of tags) {
+    tryUrls.push('https://raw.githubusercontent.com/tianzhicdev/ethkey-lite/HEAD/proofs/' + n);
   }
+  tryUrls.push('proofs/v0.4-source.md');
+  const tried = [];
+  for (const url of tryUrls) {
+    try {
+      const md = await fetchText(url);
+      document.getElementById('rp_input').value = md;
+      runReceiptVerify();
+      return;
+    } catch (e) { tried.push(url.replace(/^https:\/\/raw\.githubusercontent\.com\//, '').slice(0, 60) + ' (' + e.message + ')'); }
+  }
+  renderReceipt({ checks: [{ name: 'fetch', ok: false, detail: 'could not load a receipt — tried: ' + tried.join('; ') + '. Paste one manually or pick it from the releases page.' }], ok: false });
 }
 
 document.getElementById('rp_btn').addEventListener('click', runReceiptVerify);
