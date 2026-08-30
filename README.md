@@ -128,6 +128,19 @@ accepted only if it is exactly `0x` + 40 hex chars (anything else is refused
 with a visible note and nothing auto-runs), so a crafted link can never
 pre-fill a fake "expected signer" that would make a wrong receipt look right.
 
+Preferring a sibling repo's release? Use the fleet deep link with `&repo=`:
+[verify secretgate's newest receipt](https://tianzhicdev.github.io/ethkey-lite/receipt.html?load=latest&repo=secretgate&require=0xFD4090e27C1f946Ff01a265cAa7d4ACA662acC15) <!-- secretgate: allow public tip addr -->
+— one click loads secretgate's newest release-tag receipt and checks it against
+the maintainer signer pinned in the page's fleet trust-anchor table.
+
+> **Using a secret scanner?** A prefilled `require=0x…` link value is a
+> 50-char hex string, which high-entropy scanners (including
+> [secretgate](https://github.com/tianzhicdev/secretgate)) flag as a possible
+> secret. It is a public address, not a credential — mark the line
+> `<!-- secretgate: allow public tip addr -->` (any scanner allow-comment) or
+> add a scoped `.secretgateignore` rule. This repo does the latter for its own
+> signature/fixture files: see `.secretgateignore`.
+
 Fleet board: `receipt.html?load=latest&repo=<name>` (or the "Verify ALL fleet
 repos" button) loads and verifies the newest release-tag receipts of sibling
 projects too — `ethkey-lite`, `secretgate`, `hookpack`, `secretgate-action` —
