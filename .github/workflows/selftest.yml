@@ -208,6 +208,57 @@ jobs:
           sys.exit(1 if fails else 0)
           EOF
 
+      - name: In-repo composite action (run block extracted VERBATIM from action.yml)
+        run: |
+          set -euo pipefail
+          # The README tells in-repo consumers the composite at
+          # ./.github/actions/verify-release works. Nothing else in CI EXECUTES
+          # that composite's own step script — path resolution
+          # (GITHUB_ACTION_PATH/../../..), the sed signer-output parse, and the
+          # fail-closed grep were all untested surface. Extract the EXACT bytes
+          # from action.yml (no copy-paste drift possible) and run them against
+          # the real env contract (GITHUB_ACTION_PATH, GITHUB_OUTPUT, RECEIPT,
+          # REQUIRE): one positive + two refusals.
+          python3 - <<'EOF'
+          import sys, yaml
+          act = yaml.safe_load(open('.github/actions/verify-release/action.yml'))
+          steps = act['runs']['steps']
+          vr = [s for s in steps if s.get('id') == 'verify']
+          assert len(vr) == 1, f'expected exactly 1 id:verify step, got {len(vr)}'
+          assert vr[0]['shell'] == 'bash', 'expected bash shell step'
+          open('composite-run.sh', 'w').write(vr[0]['run'])
+          print(f'extracted {len(vr[0]["run"])} bytes of composite run block verbatim')
+          EOF
+          C_ADDR=0xf232dcdc177b53981b4d805a48c79f239db8d0f9
+          run_case () { # $1=receipt $2=require $3=expected-exit $4=label
+            local out; out=$(mktemp)
+            set +e
+            GITHUB_ACTION_PATH="$PWD/.github/actions/verify-release" \
+            GITHUB_OUTPUT="$out" RECEIPT="$1" REQUIRE="$2" \
+            bash composite-run.sh > step.log 2>&1
+            local code=$?
+            set -e
+            [ "$code" -eq "$3" ] || { echo "FAIL[$4]: exit $code, expected $3"; cat step.log; exit 1; }
+            echo "OK[$4]: exit $code"
+            printf '%s\n' "$4 OUT:"; cat step.log
+            printf '%s\n' "$4 GITHUB_OUTPUT:"; cat "$out"
+            rm -f "$out"
+          }
+          # positive: real v0.7 receipt + C anchor -> exit 0 AND the action's
+          # declared `signer` output line is written with the right address.
+          out=$(mktemp)
+          GITHUB_ACTION_PATH="$PWD/.github/actions/verify-release" \
+          GITHUB_OUTPUT="$out" RECEIPT="proofs/v0.7-verify-workflow.md" REQUIRE="$C_ADDR" \
+          bash composite-run.sh > step.log 2>&1
+          grep -qi "^signer=$C_ADDR$" "$out" || { echo 'FAIL[pos]: signer output line missing/wrong'; cat "$out"; exit 1; }
+          grep -q 'result: OK' step.log || { echo 'FAIL[pos]: no result: OK'; exit 1; }
+          echo 'OK[pos]: composite verified v0.7 receipt + published signer output'; rm -f "$out"
+          # negative 1: c18 forged-signer fixture -> composite fails (exit != 0)
+          run_case proofs/c18-forged-signer-fixture.md "$C_ADDR" 1 'forged fixture refused'
+          # negative 2: nonexistent receipt -> still fails CLOSED (no crash-open,
+          # the grep on 'result: OK' can only pass on a real verification)
+          run_case no-such-receipt.md "$C_ADDR" 1 'missing receipt fails closed'
+
       - name: receipt.html core logic tests (browser verifier vs CLI semantics)
         run: |
           set -euo pipefail

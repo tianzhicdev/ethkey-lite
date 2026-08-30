@@ -99,7 +99,11 @@ output. No secrets, no network beyond pip.
 > with zero job logs (learned the hard way; see run 33327437042). Reusable
 > workflows (`on: workflow_call`) are the supported cross-repo sharing
 > primitive. The composite still works for **in-repo** use:
-> `./.github/actions/verify-release`.
+> `./.github/actions/verify-release` — and its step script is itself
+> CI-tested: `selftest.yml` extracts the run block VERBATIM from
+> `action.yml` and executes it against the real env contract
+> (`GITHUB_ACTION_PATH`/`GITHUB_OUTPUT`), asserting the v0.7 receipt passes,
+> the forged fixture exits 1, and a missing receipt fails closed.
 
 ## Browser verification
 
