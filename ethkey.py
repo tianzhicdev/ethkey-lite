@@ -11,10 +11,15 @@ Commands:
   checksum <addr>       EIP-55 checksum-encode an address
   sign <msg>            sign msg with $ETHKEY_PK (env var) using personal_sign (EIP-191)
   recover <addr> <msg> <sig_hex>   recover signer from a personal_sign signature
+  proof [msg|--file F]  write a self-contained signed markdown receipt (--out FILE)
+  verify <proof.md>     verify a receipt; --require <addr> asserts the signer
 
 The private key is read ONLY from the ETHKEY_PK environment variable for
-`sign`, so it never lands in shell history or argv. NEVER commit or log keys.
+`sign`/`proof`, so it never lands in shell history or argv. NEVER commit or
+log keys.
 """
+import base64
+import datetime
 import hashlib
 import hmac
 import os
@@ -191,7 +196,80 @@ def selftest() -> bool:
     sk = int.from_bytes(secrets.token_bytes(32), 'big') % (N - 1) + 1
     sig2 = sign_message(b'ethkey-lite roundtrip \xf0\x9f\x94\x90', sk)
     assert recover_message(b'ethkey-lite roundtrip \xf0\x9f\x94\x90', sig2) == address_from_pk(sk)
+    # signed-receipt roundtrip + tamper detection
+    pk3, addr3 = 2, address_from_pk(2)
+    md = make_proof(b'receipt payload \xf0\x9f\x94\x91', pk3, note='selftest')
+    ok, signer, reason = verify_proof(md)
+    assert ok and signer == addr3, f'proof selftest failed: {ok} {signer} {reason}'
+    bad = md.replace(PAYLOAD_BEGIN + '\n', PAYLOAD_BEGIN + '\nZQ==\n')
+    ok2, _, _ = verify_proof(bad)
+    assert not ok2, 'tampered proof must not verify'
     return True
+
+
+# ---------- signed receipts (proof v1) ----------
+
+PROOF_MAGIC = 'ethkey-lite-proof'
+PAYLOAD_BEGIN = '-----BEGIN PAYLOAD-----'
+PAYLOAD_END = '-----END PAYLOAD-----'
+
+
+def _canonical(created: str, sha256_hex: str) -> bytes:
+    return f'{PROOF_MAGIC} v1\ncreated:{created}\nsha256:{sha256_hex}'.encode()
+
+
+def make_proof(payload: bytes, priv_int: int, note: str = '') -> str:
+    created = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    sha = hashlib.sha256(payload).hexdigest()
+    b64 = base64.b64encode(payload).decode()
+    body = '\n'.join(b64[i:i + 76] for i in range(0, len(b64), 76)) or '(empty)'
+    sig = sign_message(_canonical(created, sha), priv_int)
+    lines = [
+        f'# {PROOF_MAGIC} v1',
+        f'created: {created}',
+        f'signer: {address_from_pk(priv_int)}',
+        f'sha256: {sha}',
+        f'note: {note}',
+        f'signature: {sig}',
+        '',
+        'Signed scope: created + sha256 fields (not the note). Re-verify with',
+        "'ethkey.py verify <this file> --require <addr>' or ethers.verifyMessage",
+        'on the canonical string:',
+        f'  {PROOF_MAGIC} v1\\ncreated:<created>\\nsha256:<sha256>',
+        '',
+        PAYLOAD_BEGIN,
+        body,
+        PAYLOAD_END,
+    ]
+    return '\n'.join(lines) + '\n'
+
+
+def verify_proof(md: str):
+    """Return (ok, signer_address_or_None, reason)."""
+    try:
+        fields = {}
+        for line in md.splitlines():
+            if line.strip() == PAYLOAD_BEGIN:
+                break
+            key = line.split(':', 1)[0]
+            if key not in ('created', 'signer', 'sha256', 'note', 'signature'):
+                continue
+            k, sep, v = line.partition(':')
+            if sep:
+                fields.setdefault(k.strip(), v.strip())
+        begin = md.index(PAYLOAD_BEGIN) + len(PAYLOAD_BEGIN)
+        b64 = ''.join(md[begin:md.index(PAYLOAD_END)].split())
+        payload = b'' if b64 == '(empty)' else base64.b64decode(b64, validate=False)
+        sha = hashlib.sha256(payload).hexdigest()
+        if fields.get('sha256') != sha:
+            return False, fields.get('signer'), f'payload sha256 mismatch (header says {fields.get("sha256")})'
+        signer = recover_message(_canonical(fields.get('created', ''), sha), fields.get('signature', ''))
+        claimed = fields.get('signer', '')
+        if claimed and signer.lower() != claimed.lower():
+            return False, signer, f'signer field mismatch: recovered {signer}'
+        return True, signer, 'signature valid, payload intact'
+    except Exception as e:
+        return False, None, f'malformed proof: {e}'
 
 
 # ---------- CLI ----------
@@ -221,6 +299,54 @@ def main(argv):
         ok = rec.lower() == argv[2].lower().strip()
         print('recovered:', rec)
         print('matches claimed address:', ok)
+        return 0 if ok else 1
+    elif cmd == 'proof':
+        rest = argv[2:]
+        out = None
+        if '--out' in rest:
+            i = rest.index('--out')
+            out = rest[i + 1]
+            rest = rest[:i] + rest[i + 2:]
+        note = ''
+        if '--note' in rest:
+            i = rest.index('--note')
+            note = rest[i + 1]
+            rest = rest[:i] + rest[i + 2:]
+        if len(rest) == 2 and rest[0] == '--file':
+            with open(rest[1], 'rb') as f:
+                payload = f.read()
+        elif len(rest) == 1:
+            payload = rest[0].encode()
+        else:
+            print(__doc__)
+            return 1
+        pk_hex = os.environ.get('ETHKEY_PK')
+        if not pk_hex:
+            print('error: set ETHKEY_PK env var (key never appears in argv)', file=sys.stderr)
+            return 2
+        md = make_proof(payload, int(pk_hex.removeprefix('0x'), 16), note)
+        if out:
+            with open(out, 'w') as f:
+                f.write(md)
+            print(f'proof written: {out}')
+        else:
+            print(md, end='')
+    elif cmd == 'verify':
+        rest = argv[2:]
+        require = None
+        if '--require' in rest:
+            i = rest.index('--require')
+            require = rest[i + 1]
+            rest = rest[:i] + rest[i + 2:]
+        if len(rest) != 1:
+            print(__doc__)
+            return 1
+        with open(rest[0]) as f:
+            ok, signer, reason = verify_proof(f.read())
+        if signer and require and signer.lower() != require.lower():
+            ok, reason = False, f'signer {signer} is not required {require}'
+        print('signer:', signer)
+        print('result:', 'OK' if ok else 'FAIL', '-', reason)
         return 0 if ok else 1
     else:
         print(__doc__)

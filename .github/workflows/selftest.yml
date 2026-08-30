@@ -66,3 +66,38 @@ jobs:
               process.exit(1);
             }
             console.log("ethers.js v6 cross-check OK");' "$MSG" "$SIG" "$ADDR"
+
+      - name: Signed proof round-trip + ethers cross-check
+        run: |
+          set -euo pipefail
+          python3 ethkey.py proof --file ethkey.py --note "CI proof" --out proof.md
+          ADDR=$(python3 ethkey.py address "$ETHKEY_PK")
+          python3 ethkey.py verify proof.md --require "$ADDR"
+          # negative control: tamper with payload -> verify must exit 1
+          python3 - <<'EOF'
+          import re, subprocess, sys
+          md = open('proof.md').read()
+          m = re.search(r'-----BEGIN PAYLOAD-----\n(.*?)-----END PAYLOAD-----', md, re.S)
+          body = m.group(1).replace('\n', '')
+          body = body[:-4] + ('A' if body[-1] != 'A' else 'B') + body[-4:]
+          open('proof.md','w').write(md.replace(m.group(1), body))
+          EOF
+          if python3 ethkey.py verify proof.md; then
+            echo "FAIL: tampered proof verified"
+            exit 1
+          fi
+          # ethers cross-check of the untampered signature over the canonical string
+          rm proof.md
+          python3 ethkey.py proof --file ethkey.py --note "CI proof" --out proof.md
+          node -e 'const { ethers } = require("ethers");
+            const fs = require("fs");
+            const md = fs.readFileSync("proof.md", "utf8");
+            const g = (k) => md.match(new RegExp("^" + k + ": (.+)$", "m"))[1].trim();
+            const canon = `ethkey-lite-proof v1\ncreated:${g("created")}\nsha256:${g("sha256")}`;
+            const rec = ethers.verifyMessage(canon, g("signature"));
+            console.log("ethers proof signer:", rec);
+            if (rec.toLowerCase() !== g("signer").toLowerCase()) {
+              console.error("FAIL: ethers proof signer mismatch");
+              process.exit(1);
+            }
+            console.log("ethers proof cross-check OK");'
