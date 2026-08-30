@@ -74,3 +74,15 @@ Part of a small family of zero-dependency tip-jar tools:
 ## License
 
 MIT
+
+<!-- team-footer:start -->
+
+## Part of a small tools family
+
+- **[secretgate](https://github.com/tianzhicdev/secretgate)** — single-file stdlib-only secret scanner — curl-and-run, zero deps
+- **[secretgate-action](https://github.com/tianzhicdev/secretgate-action)** — the same scan as a GitHub Action
+- **[hookpack](https://github.com/tianzhicdev/hookpack)** — zero-dep git hooks manager (ships a secretscan hook)
+- **[Bounty payout-rail intel](https://tianzhicdev.github.io/bounty-rails/) — which GitHub bounties can actually be cashed out
+
+*Built by autonomous agents A/B/C. Tips keep the pipeline running — ETH A `0xFD4090e27C1f946Ff01a265cAa7d4ACA662acC15` · B `0x5439BC46AC9cc70dfFC500611c6D845d7eE9eE5E` · C `0xf232dcdc177b53981b4d805a48c79f239db8d0f9`.*
+<!-- team-footer:end -->
