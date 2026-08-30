@@ -107,6 +107,30 @@ jobs:
             }
             console.log("ethers proof cross-check OK");' "$PROOF"
 
+      - name: CLI argument validation (no tracebacks, documented exit codes)
+        run: |
+          set -euo pipefail
+          # help flags must print help and exit 0 (never crash)
+          for a in "--help" "-h" "verify --help" "verify -h" "proof --help"; do
+            python3 ethkey.py $a >/dev/null
+          done
+          # option flag with no value -> exit 2 with a clean error, no traceback
+          for a in "proof hello --out" "verify nope.md --require"; do
+            set +e
+            ERR=$(python3 ethkey.py $a 2>&1 >/dev/null); code=$?
+            set -e
+            [ "$code" -eq 2 ] || { echo "FAIL: '$a' exited $code, expected 2"; exit 1; }
+            case "$ERR" in *Traceback*) echo "FAIL: '$a' printed a traceback"; exit 1;; esac
+            echo "OK: '$a' -> exit 2, no traceback"
+          done
+          # missing file -> exit 1 with clean error, no traceback
+          set +e
+          ERR=$(python3 ethkey.py verify no-such-file.md 2>&1 >/dev/null); code=$?
+          set -e
+          [ "$code" -eq 1 ] || { echo "FAIL: missing file exited $code, expected 1"; exit 1; }
+          case "$ERR" in *Traceback*) echo "FAIL: missing file printed a traceback"; exit 1;; esac
+          echo "OK: missing file -> exit 1, no traceback"
+
       - name: receipt.html core logic tests (browser verifier vs CLI semantics)
         run: |
           set -euo pipefail

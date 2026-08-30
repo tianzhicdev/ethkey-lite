@@ -274,8 +274,24 @@ def verify_proof(md: str):
 
 # ---------- CLI ----------
 
+HELP_FLAGS = ('--help', '-h')
+
+
+def _take(rest, name):
+    """Return (value, new_rest, error). error is a message string or None."""
+    if name not in rest:
+        return None, rest, None
+    i = rest.index(name)
+    if i + 1 >= len(rest):
+        return None, rest, f'error: {name} requires a value'
+    return rest[i + 1], rest[:i] + rest[i + 2:], None
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else 'selftest'
+    if cmd in HELP_FLAGS:
+        print(__doc__)
+        return 0
     if cmd == 'selftest':
         selftest()
         print('selftest OK (keccak256 x2, address pk=1, EIP-55 x6, personal_sign vs ethers.js vector, roundtrip)')
@@ -302,19 +318,25 @@ def main(argv):
         return 0 if ok else 1
     elif cmd == 'proof':
         rest = argv[2:]
-        out = None
-        if '--out' in rest:
-            i = rest.index('--out')
-            out = rest[i + 1]
-            rest = rest[:i] + rest[i + 2:]
-        note = ''
-        if '--note' in rest:
-            i = rest.index('--note')
-            note = rest[i + 1]
-            rest = rest[:i] + rest[i + 2:]
+        if any(a in HELP_FLAGS for a in rest):
+            print(__doc__)
+            return 0
+        out, rest, err = _take(rest, '--out')
+        if err:
+            print(err, file=sys.stderr)
+            return 2
+        note, rest, err = _take(rest, '--note')
+        if err:
+            print(err, file=sys.stderr)
+            return 2
+        note = note or ''
         if len(rest) == 2 and rest[0] == '--file':
-            with open(rest[1], 'rb') as f:
-                payload = f.read()
+            try:
+                with open(rest[1], 'rb') as f:
+                    payload = f.read()
+            except OSError as e:
+                print(f'error: {e}', file=sys.stderr)
+                return 1
         elif len(rest) == 1:
             payload = rest[0].encode()
         else:
@@ -326,23 +348,33 @@ def main(argv):
             return 2
         md = make_proof(payload, int(pk_hex.removeprefix('0x'), 16), note)
         if out:
-            with open(out, 'w') as f:
-                f.write(md)
+            try:
+                with open(out, 'w') as f:
+                    f.write(md)
+            except OSError as e:
+                print(f'error: {e}', file=sys.stderr)
+                return 1
             print(f'proof written: {out}')
         else:
             print(md, end='')
     elif cmd == 'verify':
         rest = argv[2:]
-        require = None
-        if '--require' in rest:
-            i = rest.index('--require')
-            require = rest[i + 1]
-            rest = rest[:i] + rest[i + 2:]
+        if any(a in HELP_FLAGS for a in rest):
+            print(__doc__)
+            return 0
+        require, rest, err = _take(rest, '--require')
+        if err:
+            print(err, file=sys.stderr)
+            return 2
         if len(rest) != 1:
             print(__doc__)
             return 1
-        with open(rest[0]) as f:
-            ok, signer, reason = verify_proof(f.read())
+        try:
+            with open(rest[0]) as f:
+                ok, signer, reason = verify_proof(f.read())
+        except OSError as e:
+            print(f'error: {e}', file=sys.stderr)
+            return 1
         if signer and require and signer.lower() != require.lower():
             ok, reason = False, f'signer {signer} is not required {require}'
         print('signer:', signer)

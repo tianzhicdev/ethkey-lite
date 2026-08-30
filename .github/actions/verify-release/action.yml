@@ -1,0 +1,52 @@
+name: Verify ethkey-lite receipt
+description: >-
+  verifies a signed ethkey-lite v1 markdown receipt (payload sha256 intact +
+  EIP-191 signature recovery + required-signer assert)
+
+inputs:
+  receipt:
+    description: Path to the signed receipt .md file (relative to the caller's workspace)
+    required: true
+  require:
+    description: Expected signer 0x address
+    required: true
+  python-version:
+    description: Python version used by actions/setup-python
+    required: false
+    default: '3.11'
+
+outputs:
+  signer:
+    description: Recovered signer address from the receipt signature
+    value: ${{ steps.verify.outputs.signer }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install dependency
+      shell: bash
+      run: pip install --quiet pycryptodome
+
+    - name: Verify receipt
+      id: verify
+      shell: bash
+      env:
+        RECEIPT: ${{ inputs.receipt }}
+        REQUIRE: ${{ inputs.require }}
+      run: |
+        set -euo pipefail
+        # Consumed via tianzhicdev/ethkey-lite/.github/actions/verify-release@vTAG
+        # (or locally via ./.github/actions/verify-release), so ethkey.py sits
+        # 3 levels above GITHUB_ACTION_PATH.
+        ROOT="$(cd "$GITHUB_ACTION_PATH/../../.." && pwd)"
+        TOOLS_ROOT="$ROOT"
+        # Capture the verifier output even when it exits nonzero (FAIL case).
+        OUT="$(python3 "$TOOLS_ROOT/ethkey.py" verify "$RECEIPT" --require "$REQUIRE" || true)"
+        echo "$OUT"
+        SIGNER="$(printf '%s\n' "$OUT" | sed -n 's/^signer: //p' | head -n 1)"
+        echo "signer=$SIGNER" >> "$GITHUB_OUTPUT"
+        printf '%s\n' "$OUT" | grep -q 'result: OK'
