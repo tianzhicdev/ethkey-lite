@@ -106,3 +106,45 @@ jobs:
               process.exit(1);
             }
             console.log("ethers proof cross-check OK");' "$PROOF"
+
+      - name: receipt.html core logic tests (browser verifier vs CLI semantics)
+        run: |
+          set -euo pipefail
+          SCRATCH=$(mktemp -d); cd "$SCRATCH"
+          npm init -y >/dev/null
+          npm install ethers@6 --no-audit --no-fund >/dev/null
+          cat > t.mjs <<'EOF'
+          import fs from 'fs';
+          import nodeCrypto from 'node:crypto';
+          import { verifyMessage } from 'ethers';
+          if (!globalThis.crypto) globalThis.crypto = nodeCrypto.webcrypto;
+          const REPO = process.argv[2];
+          const html = fs.readFileSync(REPO + '/receipt.html', 'utf8');
+          const m = html.match(/\/\/ ---- CORE BEGIN ----[^\n]*\n([\s\S]*?)\/\/ ---- CORE END ----/);
+          if (!m) { console.error('CORE block not found in receipt.html'); process.exit(1); }
+          globalThis.ethers = { verifyMessage };
+          const core = new Function(m[1] + '; return { verifyReceipt };')();
+          const good = fs.readFileSync(REPO + '/proofs/v0.4-source.md', 'utf8');
+          let fails = 0;
+          const T = (n, c, d) => { console.log((c ? 'PASS' : 'FAIL') + ' | ' + n + (d && !c ? ' | ' + d : '')); if (!c) fails++; };
+          const has = (r, n) => r.checks.some(c => c.name === n && c.ok);
+          const no  = (r, n) => r.checks.some(c => c.name === n && !c.ok);
+          let r = await core.verifyReceipt(good, '');
+          T('valid receipt ok', r.ok && !no(r,'payload') && !no(r,'signature') && !no(r,'signer'), JSON.stringify(r.checks));
+          r = await core.verifyReceipt(good, '0xf232Dcdc177b53981b4D805A48C79F239DB8D0F9');
+          T('require correct addr ok', r.ok && has(r,'require'));
+          r = await core.verifyReceipt(good, '0x0000000000000000000000000000000000000000');
+          T('require wrong addr rejected', !r.ok && no(r,'require'));
+          const lines = good.split('\n');
+          const bi = lines.findIndex(l => l.trim() === '-----BEGIN PAYLOAD-----');
+          lines[bi + 1] = 'ZQ==' + lines[bi + 1].slice(4);
+          r = await core.verifyReceipt(lines.join('\n'), '');
+          T('tampered payload rejected', !r.ok && no(r,'payload'));
+          r = await core.verifyReceipt(good.replace(/^signer: .*/m, 'signer: 0x0000000000000000000000000000000000000000'), '');
+          T('signer header swap rejected', !r.ok && no(r,'signer'));
+          r = await core.verifyReceipt('not a receipt', '');
+          T('garbage rejected without crashing', !r.ok);
+          console.log(fails ? fails + ' FAILURES' : 'receipt.html core OK');
+          process.exit(fails ? 1 : 0);
+          EOF
+          node t.mjs "$GITHUB_WORKSPACE"

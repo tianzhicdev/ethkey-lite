@@ -70,6 +70,15 @@ Open [`verify.html`](verify.html) in a browser to cross-check the embedded
 plus an interactive verify-only box for arbitrary message/signature/address
 triples.
 
+Open [`receipt.html`](receipt.html) to verify a **signed receipt** end-to-end
+in the browser — paste any `ethkey-lite-proof v1` markdown (or click "Load
+v0.4 release receipt" to fetch this repo's own) and it checks payload sha256
+integrity (WebCrypto), the EIP-191 signature, and the signer address, with the
+same verdicts as `ethkey.py verify --require`. Verify-only: nothing is
+uploaded and nothing is signed. Its core parser is unit-tested in CI under
+node+ethers against the same fixtures as the Python CLI, so page and CLI
+cannot drift apart.
+
 ## Security notes
 
 - `new` prints the private key to stdout and writes nothing to disk.

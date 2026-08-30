@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ethkey-lite — signed receipt verifier</title>
+<meta name="description" content="Verify an ethkey-lite v1 signed receipt in your browser: payload sha256 integrity + EIP-191 signature recovered with ethers.js v6. No upload, no signing.">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.2/ethers.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --fg: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
+    --pass: #3fb950; --fail: #f85149; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--mono);
+         max-width: 900px; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 1.3rem; } h1 span { color: var(--muted); font-weight: normal; }
+  h2 { font-size: 1rem; color: var(--accent); margin-top: 2rem; }
+  .muted { color: var(--muted); font-size: .85rem; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+          padding: .8rem 1rem; margin: .6rem 0; }
+  .row { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
+  .badge { font-weight: bold; padding: 0 .5rem; border-radius: 4px; white-space: nowrap; }
+  .pass { color: var(--bg); background: var(--pass); }
+  .fail { color: var(--bg); background: var(--fail); }
+  .hex { word-break: break-all; font-size: .8rem; color: var(--muted); }
+  label { display: block; margin-top: .8rem; color: var(--muted); font-size: .85rem; }
+  input, textarea { width: 100%; background: var(--bg); color: var(--fg);
+          border: 1px solid var(--border); border-radius: 4px; padding: .5rem;
+          font: .85rem var(--mono); }
+  button { margin-top: 1rem; margin-right: .5rem; background: #238636; color: #fff; border: 0;
+           border-radius: 4px; padding: .5rem 1rem; font: bold .9rem var(--mono); cursor: pointer; }
+  button:hover { background: #2ea043; }
+  button.secondary { background: #21262d; border: 1px solid var(--border); }
+  button.secondary:hover { background: #30363d; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<h1>ethkey-lite <span>— signed receipt verifier</span></h1>
+<p class="muted">Paste any <code>ethkey-lite-proof v1</code> markdown receipt (produced by
+<code>ethkey.py proof</code>) and verify it <em>entirely in your browser</em>:
+the payload is re-hashed (SHA-256 via WebCrypto) and the signature is recovered with
+<code>ethers.verifyMessage</code> (EIP-191). Nothing is uploaded anywhere and nothing is
+signed here — verify-only. Matches <code>ethkey.py verify</code> and GitHub Actions.</p>
+
+<div class="card">
+  <label>Receipt markdown (paste)</label>
+  <textarea id="rp_input" rows="10" placeholder="# ethkey-lite-proof v1&#10;created: ...&#10;signer: 0x...&#10;sha256: ...&#10;signature: 0x...&#10;-----BEGIN PAYLOAD-----&#10;base64...&#10;-----END PAYLOAD-----"></textarea>
+  <label>Require signer address (optional — like <code>verify --require</code>)</label>
+  <input id="rp_require" placeholder="0xf232Dcdc177b53981b4D805A48C79F239DB8D0F9">
+  <div>
+    <button id="rp_btn">Verify receipt</button>
+    <button id="rp_load" class="secondary">Load v0.4 release receipt</button>
+  </div>
+</div>
+<div id="rp_output"></div>
+
+<h2>What each check means</h2>
+<div class="card muted">
+  <strong>payload</strong> — base64 body decoded, SHA-256 recomputed, compared to the
+  <code>sha256:</code> header. Detects any edit to the attached artifact.<br>
+  <strong>signature</strong> — <code>ethers.verifyMessage</code> over the canonical string
+  <code>ethkey-lite-proof v1\ncreated:&lt;created&gt;\nsha256:&lt;sha256&gt;</code>
+  (hashed scope only; the <code>note:</code> field is not signed).<br>
+  <strong>signer</strong> — recovered address equals the <code>signer:</code> header, and
+  if supplied, the required address. A tampered payload breaks payload AND signature.
+</div>
+<p class="muted">CLI equivalent: <code>python3 ethkey.py verify proof.md --require 0x…</code> —
+exit 0 only when all three pass. Source:
+<a href="https://github.com/tianzhicdev/ethkey-lite">github.com/tianzhicdev/ethkey-lite</a></p>
+
+<script>
+// ---- CORE BEGIN ---- (pure functions; also unit-tested in node, see CI)
+const PAYLOAD_BEGIN = '-----BEGIN PAYLOAD-----';
+const PAYLOAD_END = '-----END PAYLOAD-----';
+const PROOF_MAGIC = 'ethkey-lite-proof';
+
+function parseProof(md) {
+  // Mirrors ethkey.py verify_proof: known-key whitelist before payload block,
+  // field order irrelevant, unknown lines ignored (injection guard).
+  const fields = {};
+  for (const line of md.split('\n')) {
+    if (line.trim() === PAYLOAD_BEGIN) break;
+    const key = line.split(':', 1)[0];
+    if (!['created', 'signer', 'sha256', 'note', 'signature'].includes(key)) continue;
+    const idx = line.indexOf(':');
+    if (idx !== -1 && !(key in fields)) fields[key] = line.slice(idx + 1).trim();
+  }
+  const b0 = md.indexOf(PAYLOAD_BEGIN);
+  const b1 = md.indexOf(PAYLOAD_END);
+  if (b0 === -1 || b1 === -1 || b1 < b0) throw new Error('missing payload block markers');
+  const b64 = md.slice(b0 + PAYLOAD_BEGIN.length, b1).replace(/\s+/g, '');
+  return { fields, b64 };
+}
+
+function b64ToBytes(b64) {
+  if (b64 === '(empty)') return new Uint8Array(0);
+  const s = atob(b64);
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out;
+}
+
+async function sha256Hex(bytes) {
+  if (!globalThis.crypto || !crypto.subtle)
+    throw new Error('WebCrypto unavailable — open this page over http(s), not file://');
+  const h = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function canonicalString(created, sha256Hex_) {
+  return PROOF_MAGIC + ' v1\ncreated:' + created + '\nsha256:' + sha256Hex_;
+}
+
+async function verifyReceipt(md, requireAddr) {
+  // Returns { checks: [{name, ok, detail}], ok } — mirrors CLI verify + --require.
+  const checks = [];
+  const push = (name, ok, detail) => checks.push({ name, ok: !!ok, detail });
+  try {
+    if (typeof ethers === 'undefined') throw new Error('ethers v6 failed to load from CDN (offline?)');
+    const { fields, b64 } = parseProof(md);
+    let payloadOk = false, sha = null;
+    try {
+      const payload = b64ToBytes(b64);
+      sha = await sha256Hex(payload);
+      payloadOk = (fields.sha256 === sha);
+      push('payload', payloadOk, payloadOk
+        ? sha + ' (' + payload.length + ' bytes)'
+        : 'header says ' + fields.sha256 + ', recomputed ' + sha + ' — payload was edited');
+    } catch (e) {
+      push('payload', false, 'cannot decode/hash payload: ' + e.message);
+    }
+    const canonical = canonicalString(fields.created || '', fields.sha256 || '');
+    let recovered = null;
+    try {
+      recovered = ethers.verifyMessage(canonical, fields.signature || '');
+      push('signature', true, 'valid over created+sha256 scope');
+    } catch (e) {
+      push('signature', false, 'invalid signature: ' + e.message);
+    }
+    if (recovered) {
+      const headerOk = recovered.toLowerCase() === (fields.signer || '').toLowerCase();
+      push('signer', headerOk, headerOk
+        ? recovered
+        : 'recovered ' + recovered + ' but header claims ' + (fields.signer || '(none)'));
+      if (requireAddr) {
+        const reqOk = recovered.toLowerCase() === requireAddr.toLowerCase();
+        push('require', reqOk, reqOk ? 'is required ' + requireAddr : 'is ' + recovered + ', required ' + requireAddr);
+      }
+    }
+  } catch (e) {
+    push('parse', false, e.message);
+  }
+  return { checks, ok: checks.length > 0 && checks.every(c => c.ok) };
+}
+// ---- CORE END ----
+
+function renderReceipt(result) {
+  const root = document.getElementById('rp_output');
+  root.innerHTML = '';
+  result.checks.forEach(c => {
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML =
+      '<div class="row"><span class="badge ' + (c.ok ? 'pass' : 'fail') + '">' +
+      (c.ok ? 'PASS' : 'FAIL') + '</span><strong>' + c.name + '</strong></div>' +
+      '<div class="hex">' + String(c.detail).replace(/</g, '&lt;') + '</div>';
+    root.appendChild(div);
+  });
+  const sum = document.createElement('div');
+  sum.className = 'card';
+  sum.innerHTML = '<span class="badge ' + (result.ok ? 'pass' : 'fail') + '">' +
+    (result.ok ? 'RECEIPT VALID' : 'RECEIPT INVALID') + '</span>';
+  root.appendChild(sum);
+}
+
+async function runReceiptVerify() {
+  const md = document.getElementById('rp_input').value;
+  const req = document.getElementById('rp_require').value.trim();
+  if (!md.trim()) { renderReceipt({ checks: [{ name: 'input', ok: false, detail: 'paste a receipt first' }], ok: false }); return; }
+  renderReceipt(await verifyReceipt(md, req));
+}
+
+async function loadSample() {
+  try {
+    const r = await fetch('proofs/v0.4-source.md', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    document.getElementById('rp_input').value = await r.text();
+    runReceiptVerify();
+  } catch (e) {
+    renderReceipt({ checks: [{ name: 'fetch', ok: false, detail: 'could not load sample: ' + e.message }], ok: false });
+  }
+}
+
+document.getElementById('rp_btn').addEventListener('click', runReceiptVerify);
+document.getElementById('rp_load').addEventListener('click', loadSample);
+</script>
+</body>
+</html>
