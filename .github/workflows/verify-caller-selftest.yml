@@ -39,6 +39,17 @@ on:
         required: false
         type: string
         default: proofs/v1.1-workflow-defaults.md
+      # c105: the workflow_dispatch API substitutes an input's field DEFAULT
+      # when the JSON value is "" (measured twice: a require:'' dispatch of
+      # verify-release logged REQUIRE: <default addr> = a true-gate run). The
+      # workflow_call empty-gate leg was therefore UNDRIVABLE from the API.
+      # This sentinel input makes it drivable from the caller side: 'EMPTY'
+      # maps to a true empty string at the workflow_call boundary.
+      require_addr:
+        description: "Signer gate addr; 'EMPTY' drives the empty-require leg (must FAIL)"
+        required: false
+        type: string
+        default: "0xf232dcdc177b53981b4d805a48c79f239db8d0f9"
   schedule:
     - cron: '37 5 * * *'
 
@@ -51,7 +62,10 @@ jobs:
     uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v1.1
     with:
       receipt: ${{ inputs.receipt || 'proofs/v1.1-workflow-defaults.md' }}
-      require: "0xf232dcdc177b53981b4d805a48c79f239db8d0f9"
+      # NB: GitHub expressions treat '' as FALSY, so the tempting
+      # `cond && '' || x` collapses to x and would hand the tool the literal
+      # 'EMPTY'. The empty string is produced AFTER selection by fromJSON.
+      require: ${{ fromJSON(inputs.require_addr == 'EMPTY' && '[""]' || '["0xf232dcdc177b53981b4d805a48c79f239db8d0f9"]')[0] }}
 
   # Proves the signer JOB OUTPUT wiring: this job only runs if `verify`
   # succeeded, and it fails if the reusable workflow's outputs map came back
