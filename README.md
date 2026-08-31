@@ -36,6 +36,11 @@ ETHKEY_PK=*** python3 ethkey.py proof --file F --out p.md --note "text"
 python3 ethkey.py verify p.md --require <addr>  # exit 0 iff sig valid AND signer
 ```
 
+`verify --require` refuses an EMPTY or whitespace-only value with exit 2:
+an empty address would silently switch the signer gate off while looking
+gated, so the flag is rejected at the argument layer instead. Omit the flag
+entirely to verify without gating.
+
 `recover` exits 0 when the recovered signer matches the claimed address, 1
 otherwise, 2 when the signature is malformed or carries an invalid recovery
 id / out-of-range r or s (strict input validation, matching ethers.js v6:

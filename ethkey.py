@@ -13,6 +13,7 @@ Commands:
   recover <addr> <msg> <sig_hex>   recover signer from a personal_sign signature
   proof [msg|--file F]  write a self-contained signed markdown receipt (--out FILE)
   verify <proof.md>     verify a receipt; --require <addr> asserts the signer
+                        (an empty/whitespace --require value is refused, exit 2)
 
 The private key is read ONLY from the ETHKEY_PK environment variable for
 `sign`/`proof`, so it never lands in shell history or argv. NEVER commit or
@@ -264,6 +265,18 @@ def selftest() -> bool:
     okt, _, reasont = verify_proof(trunc)
     assert not okt and 'unterminated' in reasont, f'truncated bundle must fail closed: {okt} {reasont}'
     assert len(split_proofs(multi)) == 2 and len(split_proofs(md)) == 1
+    # c105 find (closed here): --require with an EMPTY value must refuse at
+    # the ARGS layer, never bless. Whitespace-only too; a legit empty --note
+    # must stay legal (scope is --require only).
+    v, _, err_empty = _take(['--require', ''], '--require')
+    assert v is None and err_empty and 'empty' in err_empty, \
+        f'empty --require must refuse: {v!r} {err_empty!r}'
+    _, _, err_ws = _take(['--require', '   '], '--require')
+    assert err_ws and 'empty' in err_ws, f'whitespace --require must refuse: {err_ws!r}'
+    v2, rest2, err_ok = _take(['--require', '0xabc'], '--require')
+    assert v2 == '0xabc' and rest2 == [] and err_ok is None, '--require happy path'
+    v3, _, err_note = _take(['--note', ''], '--note')
+    assert v3 == '' and err_note is None, 'empty --note must stay legal (fix is --require-scoped)'
     return True
 
 
@@ -407,7 +420,16 @@ def _take(rest, name):
     i = rest.index(name)
     if i + 1 >= len(rest):
         return None, rest, f'error: {name} requires a value'
-    return rest[i + 1], rest[:i] + rest[i + 2:], None
+    value = rest[i + 1]
+    if name == '--require' and not value.strip():
+        # Empty/whitespace require = gate OFF while looking gated (c105 find:
+        # --require '' printed result:OK with NO signer check, both v0.8/v0.9).
+        # Refuse at the ARGS layer: an operator passing an empty var (CI
+        # variable unset, typo'd quotes) must get exit 2, never a bless.
+        return None, rest, (f'error: {name} value is empty — passing an empty '
+                            f'address silently disables the signer gate; '
+                            f'omit the flag to verify without gating')
+    return value, rest[:i] + rest[i + 2:], None
 
 
 def main(argv):
