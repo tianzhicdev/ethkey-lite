@@ -14,18 +14,18 @@ jobs:
       # published test vector, not a real key.
       ETHKEY_PK: "0x4646464646464646464646464646464646464646464646464646464646464646"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # full history: scripts/check-sitemap-git-truth.py compares each
           # sitemap lastmod against that page's last commit date (A c28 /
           # B c22 stale-companion class)
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
 
@@ -223,6 +223,22 @@ jobs:
           assert len(set(vals.values())) == 1, f'FAIL: version refs drifted: {vals}'
           print(f'OK: consumer version refs consistent across 4 surfaces ({vals["README"]})')
           EOF
+
+      - name: "CI uses: refs are content addresses (B c31 tripwire, hardened port)"
+        run: |
+          set -euo pipefail
+          # One layer OUT from the c31 engine pin: every uses: step this
+          # repo's CI EXECUTES (workflows AND the composite's runs.steps)
+          # must be a 40-hex sha, a local ./, or the same-repo
+          # workflow_call ref. A movable @vN tag is the frozen-engine
+          # float class one layer up (actions/checkout@v4's head IS a
+          # force-movable backport branch — gh read-back 2026-08-31).
+          # Parsed-YAML walk (comment prose can't fake a step = B's own
+          # c30 vacuous-RED lesson); zero steps collected = RED (c27
+          # vacuous-green rule); PIN_ACTION_REF must agree with the
+          # executing secretgate-action ref (leg 1 pins the EXECUTING
+          # ref's bytes — same sha on both sides of secrets.yml).
+          python3 scripts/workflow-pins.py
 
       - name: Page meta-surface contract (A c30 port, A c33 offer)
         run: |
@@ -874,9 +890,9 @@ jobs:
     # fails 3.9 here or must update the pinned bound.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.9"
 
