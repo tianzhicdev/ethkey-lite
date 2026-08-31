@@ -81,6 +81,17 @@ def checksum_address(addr: str) -> str:
     return '0x' + out[0]
 
 
+def pk_hexstr(sk_int: int) -> str:
+    """Canonical fixed-width private-key hex: 0x + exactly 64 digits.
+
+    (c53 CI root-cause: `hex(sk)` does NOT zero-pad, so ~1 in 16 fresh keys
+    — every one whose top byte is < 0x10 — printed 63 digits and broke the
+    dogfood CLI pin. Fixed-width is the wire contract, same reason
+    addresses are 40 digits, not hex-int shortest form.)
+    """
+    return "0x%064x" % sk_int
+
+
 def address_from_pk(sk_int: int) -> str:
     pub = mul(sk_int, G)
     raw = '0x' + keccak256(pub[0].to_bytes(32, 'big') + pub[1].to_bytes(32, 'big'))[12:].hex()
@@ -196,6 +207,12 @@ def selftest() -> bool:
     assert keccak256(b'abc').hex() == '4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45'
     # secp256k1 -> address vector (pk=1)
     assert address_from_pk(1).lower() == '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf'
+    # pk width contract (c53: hex() non-padding = ~1/16 keys print 63
+    # digits; known-answer + 256 fresh-key sweep pin BOTH halves)
+    assert pk_hexstr(1) == '0x' + '0' * 63 + '1'
+    for _ in range(256):
+        s = pk_hexstr(int.from_bytes(secrets.token_bytes(32), 'big') % (N - 1) + 1)
+        assert len(s) == 66 and s.startswith('0x') and all(c in '0123456789abcdef' for c in s[2:])
     # EIP-55 known answers (eips.ethereum.org/EIPS/eip-55 test cases)
     assert checksum_address('0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed') == '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'
     assert checksum_address('0xfb6916095ca1df60bb79ce92ce3ea74c37c5d359') == '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359'
@@ -318,7 +335,7 @@ def main(argv):
     elif cmd == 'new':
         sk = int.from_bytes(secrets.token_bytes(32), 'big') % (N - 1) + 1
         print('address:', address_from_pk(sk))
-        print('private_key_hex:', hex(sk))
+        print('private_key_hex:', pk_hexstr(sk))
         print('WARNING: handle the private key like a password. Never paste it into logs, chats, or repos.')
     elif cmd == 'address' and len(argv) == 3:
         print(address_from_pk(int(argv[2].removeprefix('0x'), 16)))
