@@ -27,6 +27,14 @@ Credential discipline (my leg, absent from the plain 'add a token' shape):
     leaks fleet-wide credentials to hosts our gates don't control. Host
     EQUALITY, not substring: 'api.github.com' appearing anywhere else in a
     URL (path/query) must NOT earn the header.
+  * Transport STRIP at the opener (c46, A c53 class, reproduced RED on my own
+    c43 bytes before shipping): host-scope-at-attach is correct only while the
+    call graph never follows a 302 FROM an api-hosted URL. urllib copies the
+    caller's headers onto redirect requests across hostnames, so any such
+    redirect rides the per-job token to the target host. CrossHostAuthStrip
+    removes Authorization whenever redirect hostnames differ (same-host keeps
+    it — exclusion twin pinned in --selftest). Belt AND braces: attach-scope
+    handles the honest path, opener-strip handles the invisible assumption.
   * Fail-closed wiring — inside CI (GITHUB_ACTIONS=true) a missing token is a
     wiring defect: exit 1, do NOT silently fall back to unauthenticated (a
     silent carve-out re-invites the very flake this fixes; C c38 rule: an
@@ -82,6 +90,33 @@ def headers_for(url):
     return h
 
 
+class CrossHostAuthStrip(urllib.request.HTTPRedirectHandler):
+    """Transport-layer belt (c46, A c53 offer claimed, live-reproduced on MY
+    pre-fix bytes first: hop1 saw the token, hop2 saw it too, rc=0).
+
+    urllib's base redirect handler copies the caller's headers onto the
+    redirect request verbatim, ACROSS hostnames (hostname string equality,
+    not IP — localhost vs 127.0.0.1 counts as cross-host). headers_for()
+    attaches host-scoped at the request site; that is correct only while no
+    response from the api host ever 302s elsewhere — a load-bearing,
+    invisible assumption. Strip Authorization whenever the redirect target's
+    hostname differs from the source request's; a same-host redirect keeps
+    it (the exclusion-twin leg in --selftest)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is None:
+            return None
+        src_host = urllib.parse.urlsplit(req.full_url).hostname
+        dst_host = urllib.parse.urlsplit(newurl).hostname
+        if src_host != dst_host and new.has_header("Authorization"):
+            new.remove_header("Authorization")
+        return new
+
+
+_OPENER = urllib.request.build_opener(CrossHostAuthStrip)
+
+
 def is_transient(exc):
     """Retry ONLY transport errors + 5xx. 4xx = structural (bad token,
     deleted release): retrying hides the real error and wastes the budget."""
@@ -95,9 +130,8 @@ def get(url, raw=False, attempts=3):
     for attempt in range(attempts):
         try:
             req = urllib.request.Request(url, headers=headers_for(url))
-            with urllib.request.urlopen(req, timeout=30) as r:
-                d = r.read()
-                return d if raw else json.loads(d)
+            d = _OPENER.open(req, timeout=30).read()
+            return d if raw else json.loads(d)
         except urllib.error.HTTPError as e:
             if not is_transient(e):
                 raise SystemExit(
@@ -143,6 +177,32 @@ def selftest():
         expect("base UA lost", h3.get("User-Agent") == UA)
     finally:
         os.environ.pop("GITHUB_TOKEN", None)
+
+    # 3b. redirect-strip unit pair (c46, A c53 class): the exclusion-twin —
+    # cross-host redirect MUST drop the token, same-host MUST keep it.
+    # Real Request objects + the real handler; no network.
+    class _FP:  # minimal file-pointer stub (handler never reads it)
+        def flush(self):
+            pass
+
+    hr = CrossHostAuthStrip()
+    os.environ["GITHUB_TOKEN"] = "SELFTEST-TOKEN"
+    try:
+        orig = urllib.request.Request(
+            "https://api.github.com/x", headers=headers_for("https://api.github.com/x"))
+        expect("orig request has no Authorization (setup broke)",
+               orig.has_header("Authorization"))
+        xhost = hr.redirect_request(orig, _FP(), 302, "Found", {},
+                                    "https://objects.githubusercontent.com/y")
+        expect("cross-host redirect KEPT the token (leak)",
+               xhost is not None and not xhost.has_header("Authorization"))
+        shost = hr.redirect_request(orig, _FP(), 302, "Found", {},
+                                    "https://api.github.com/other-path")
+        expect("same-host redirect STRIPPED the token (over-strip twin)",
+               shost is not None and shost.has_header("Authorization"))
+    finally:
+        os.environ.pop("GITHUB_TOKEN", None)
+
     # 4. classifier: 4xx structural, 5xx/transport transient
     from email.message import Message
     def mk(code):
@@ -160,6 +220,7 @@ def selftest():
         sys.exit(1)
     print("OK: release-assets-parity selftest "
           "(host-scope x6 urls incl substring baits, empty-token, "
+          "cross-host redirect strip + same-host twin, "
           "classifier 4xx/5xx/transport)")
 
 

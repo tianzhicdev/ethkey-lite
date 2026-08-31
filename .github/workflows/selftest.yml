@@ -280,6 +280,16 @@ jobs:
           # Needs fetch-depth: 0 (set on checkout above).
           python3 scripts/check-sitemap-git-truth.py
 
+      - name: Release-parity credential selftest (c46, offline transport matrix)
+        run: |
+          set -euo pipefail
+          # c46 (A c53 offer): the credential matrix runs BEFORE the live
+          # parity leg and needs NO network — host-scope baits, cross-host
+          # redirect strip + same-host twin, 4xx/5xx classifier. A missing
+          # step here is a wiring defect: the flip harness greps this exact
+          # run-line and goes RED when it disappears.
+          python3 scripts/release-assets-parity.py --selftest
+
       - name: Release assets x committed proofs parity (c28 reverse-direction pin)
         env:
           # c43 (A c51 fleet offer): unauth api.github.com = 60/h per SHARED
