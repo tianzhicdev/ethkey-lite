@@ -278,6 +278,31 @@ def selftest() -> bool:
     assert v2 == '0xabc' and rest2 == [] and err_ok is None, '--require happy path'
     v3, _, err_note = _take(['--note', ''], '--note')
     assert v3 == '' and err_note is None, 'empty --note must stay legal (fix is --require-scoped)'
+    # c109 find (closed here): the LIBRARY door. verify_proof(require='')
+    # skipped the CLI _take refuse entirely and blessed a wrong-signer
+    # receipt (require='   ' only failed by accident — blank-vs-addr string
+    # compare). Now empty/whitespace raises; require=None stays the
+    # documented no-gate path (scope cell); padded valid addr still gates
+    # (normalized, not blessed-broadened).
+    pk_w = 7
+    addr_w = address_from_pk(pk_w)
+    md_w = make_proof(b'c109 wrong-signer fixture', pk_w, note='c109')
+    try:
+        verify_proof(md_w, require='')
+        raise AssertionError("library require='' must raise, not bless")
+    except ValueError as e_c109:
+        assert 'empty' in str(e_c109), f'refuse message must name the footgun: {e_c109}'
+    try:
+        verify_proof(md_w, require='   ')
+        raise AssertionError("library require='   ' must raise, not accident-fail")
+    except ValueError:
+        pass
+    okn, sn, _ = verify_proof(md_w, require=None)
+    assert okn and sn == addr_w, 'require=None stays legal no-gate path'
+    okp, _, rp = verify_proof(md_w, require='  ' + addr_w + ' \n')
+    assert okp, f'padded valid require must gate+pass after normalize: {rp}'
+    okb2, _, rb2 = verify_proof(md_w, require=address_from_pk(9))
+    assert not okb2 and 'is not required' in rb2, 'wrong valid require still FAILs'
     return True
 
 
@@ -386,7 +411,23 @@ def verify_proof(md: str, require=None):
     multi-receipt docs join signers with '+' and name the first failing
     slice with its index. `require` (optional addr) asserts EVERY slice's
     recovered signer — a good first receipt can no longer carry a
-    wrong-signered second one through a --require gate."""
+    wrong-signered second one through a --require gate.
+    c109 (same fail-open family as c103 --require / c107 --out, at the LAST
+    unguarded door): require='' meant 'gate ON' to a caller building kwargs
+    from a CI variable, but every `if require` below reads it as no-gate and
+    the function blesses a wrong-signer receipt — the library path skips the
+    CLI's _take() refuse entirely. A whitespace-only value fared worse: it
+    passed the truthiness gate and compared against the blank (fails by
+    accident, never by contract). Now: empty/whitespace require raises
+    ValueError (CLI main maps it to exit 2); require=None stays the
+    documented no-gate path (scope cell, c103 discipline)."""
+    if require is not None:
+        if not require.strip():
+            raise ValueError(
+                'verify_proof: require= passed an empty/whitespace value — '
+                'that silently disables the signer gate; pass require=None '
+                'to verify without gating')
+        require = require.strip()
     try:
         slices = split_proofs(md)
     except ValueError as e:
@@ -543,10 +584,15 @@ def main(argv):
         try:
             with open(rest[0]) as f:
                 ok, signer, reason = verify_proof(f.read(), require=require)
+        except ValueError as e:
+            # c109: library-door empty-require refuse (CLI _take normally
+            # catches this first; reachable if this layer is ever reused)
+            print(f'error: {e}', file=sys.stderr)
+            return 2
         except OSError as e:
             print(f'error: {e}', file=sys.stderr)
             return 1
-        if signer and require and '+' not in signer and signer.lower() != require.lower():
+        if signer and require and '+' not in signer and signer.lower() != require.strip().lower():
             ok, reason = False, f'signer {signer} is not required {require}'
         print('signer:', signer)
         print('result:', 'OK' if ok else 'FAIL', '-', reason)

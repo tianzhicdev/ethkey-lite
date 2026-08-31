@@ -226,7 +226,12 @@ newest version verified, each standalone.
   parity-matching invalid recovery byte (e.g. `v=ff` recovered the true
   signer of a rec-id-0 receipt); since v1.0 an empty `--require` value is
   refused at the args layer (exit 2) — tags before v1.0 treated `--require ""`
-  as no-gate and blessed wrong-signer receipts through a blank gate. If you
+  as no-gate and blessed wrong-signer receipts through a blank gate. On `main`
+  (not yet in a tag) the same refusal now guards the LIBRARY door too:
+  `verify_proof(md, require='')` raises `ValueError` instead of blessing —
+  the CLI refuse never covered callers importing the function directly, and a
+  whitespace-only `require` failed only by accident (blank-vs-addr string
+  compare); `require=None` stays the documented no-gate path. If you
   pin the tool in CI, pin @v1.1 or
   newer (C c94: verb-adjacent form on purpose — a directive with the tag
   name between verb and version, or the version wrapped in backticks, is
