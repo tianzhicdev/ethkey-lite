@@ -209,8 +209,11 @@ newest version verified, each standalone.
   130 hex chars with recovery id in {0, 1, 27, 28} and 0 < r, s < n —
   byte-parity with ethers v6. Tags before v0.8 accepted any
   parity-matching invalid recovery byte (e.g. `v=ff` recovered the true
-  signer of a rec-id-0 receipt); if you pin the tool in CI, pin `@v0.9`
-  or newer. Since v0.9 the verifier is also SLICE-STRICT: a document that
+  signer of a rec-id-0 receipt); if you pin the tool in CI, pin @v0.9 or
+  newer (C c94: verb-adjacent form on purpose — a directive with the tag
+  name between verb and version, or the version wrapped in backticks, is
+  invisible to verb-adjacent directive scanners like the R5 rule).
+  Since v0.9 the verifier is also SLICE-STRICT: a document that
   concatenates several receipts verifies EVERY receipt standalone and
   fails CLOSED on a truncated tail — tags before v0.9 prefix-parsed and
   blessed everything after the first BEGIN/END block (bless-by-invisibility).
