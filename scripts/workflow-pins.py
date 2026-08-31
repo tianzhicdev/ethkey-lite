@@ -195,6 +195,65 @@ def allowed(value):
     return False
 
 
+def order_rail(path):
+    """Step-ORDER rail (A c38 invented, B shipped @ railsite 1d97ae2, ported
+    here per B's c33 offer): leg 1 must run BEFORE the secretgate-action
+    uses: step and leg 2 AFTER it. A pin that executes after the thing it
+    pins is worthless — the fleet's whole c31 defect (frozen engine default)
+    is only caught because leg 2 names the engine AFTER the scan. Intent is
+    not enforcement: nothing here failed if a future edit reordered steps or
+    renamed a marker past the locator; this rail makes that RED.
+    Returns list of error strings (empty = green)."""
+    LEG1, LEG2 = "leg 1", "leg 2"
+    steps = []          # [name, uses] per '- ' item, in document order
+    in_steps = False
+    steps_indent = None
+    for (i, k, v) in walk_yaml(path):
+        if k == "steps":
+            in_steps, steps_indent = True, i
+            continue
+        if in_steps and i <= steps_indent:
+            in_steps = False
+        if not in_steps:
+            continue
+        if k.startswith("-"):                       # new '- ' item begins
+            steps.append([None, None])
+            key = k[1:]
+        elif steps:                                # continuation key of item
+            key = k
+        else:
+            continue
+        if key == "name":
+            steps[-1][0] = v.strip("'")
+        elif key == "uses":
+            steps[-1][1] = v.strip("'")
+    idx = lambda pred: [n for n, (nm, us) in enumerate(steps) if pred(nm, us)]
+    leg1 = idx(lambda nm, us: nm and LEG1 in nm)
+    uses = idx(lambda nm, us: us and us.startswith(SECRETGATE_ACTION + "@"))
+    leg2 = idx(lambda nm, us: nm and LEG2 in nm)
+    errs = []
+    if len(leg1) != 1:
+        errs.append(f"expected exactly ONE step named with '{LEG1}', found "
+                    f"{len(leg1)} — renamed/removed pin step must FAIL the "
+                    "rail, never silently skip it")
+    if len(uses) != 1:
+        errs.append(f"expected exactly ONE {SECRETGATE_ACTION} uses: step, "
+                    f"found {len(uses)}")
+    if len(leg2) != 1:
+        errs.append(f"expected exactly ONE step named with '{LEG2}', found "
+                    f"{len(leg2)}")
+    if len(leg1) == len(uses) == len(leg2) == 1:
+        if not (leg1[0] < uses[0] < leg2[0]):
+            errs.append(f"pin ORDER broken: leg1@{leg1[0]} uses@{uses[0]} "
+                        f"leg2@{leg2[0]} — leg 1 must precede the action "
+                        "(fails it closed BEFORE execution), leg 2 must "
+                        "follow it (names what actually scanned)")
+    if not errs:
+        print(f"ok: pin order rail — leg1({leg1[0]}) < uses({uses[0]}) < "
+              f"leg2({leg2[0]}) in {os.path.basename(path)}")
+    return errs
+
+
 def main() -> int:
     root = sys.argv[1] if len(sys.argv) > 1 else "."
     if len(sys.argv) > 2:
@@ -252,6 +311,14 @@ def main() -> int:
         else:
             print(f"ok: PIN_ACTION_REF agrees with the executing "
                   f"secretgate-action ref ({sorted(sg_refs)[0][:8]}..)")
+    # step-ORDER rail (B c33 offer, A c38 class): runs on secrets.yml —
+    # leg1 < uses < leg2, exactly one of each, missing/renamed = RED.
+    for path in targets:
+        if os.path.basename(path) == "secrets.yml":
+            for e in order_rail(path):
+                print(f"::error::{os.path.relpath(path, root)}: {e}",
+                      file=sys.stderr)
+                bad = 1
     if bad:
         return 1
     print(f"OK: all {len(collected)} uses: refs content-addressed "

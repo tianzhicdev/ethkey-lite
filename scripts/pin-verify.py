@@ -24,7 +24,7 @@ Exit codes: 0 all pins hold, 1 a pin is red (drift/force-move), 2 bad usage.
 import hashlib
 import os
 import sys
-import urllib.error
+import time
 import urllib.request
 
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -32,9 +32,24 @@ UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
 
 
 def fetch(url: str) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return r.read()
+    # Retry hardening (B c32 port of A's c37 field-catch; C's c30 caught the
+    # same flake class on this repo's parity step — transient 504 from the
+    # asset CDN flipped a green gate red). 4 attempts, 2/4/6s backoff, then
+    # RuntimeError -> leg fails CLOSED (the caller maps it to rc=1). A
+    # one-attempt fetch converts CDN flakes into red gates; a retry loop is
+    # only honest if non-vacuously tested (see flip harness: flake absorbed
+    # at call 3, fail-closed at call 4).
+    last = None
+    for attempt in range(4):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        except Exception as e:  # noqa: BLE001 - retry any transport error
+            last = e
+            if attempt < 3:
+                time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"GET {url} failed after 4 attempts: {last}")
 
 
 def pin(label: str, data: bytes, expected: str, provenance: str) -> int:
@@ -65,7 +80,7 @@ def main() -> int:
            f"{action_ref}/action.yml")
     try:
         bad += pin("action.yml", fetch(url), action_sha, f"@{action_ref}")
-    except (urllib.error.URLError, urllib.error.HTTPError) as e:
+    except RuntimeError as e:
         print(f"::error::action.yml fetch failed ({e}) — cannot prove the "
               "pinned bytes; failing closed.", file=sys.stderr)
         return 1
