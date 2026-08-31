@@ -247,6 +247,15 @@ jobs:
           # COVERAGE vacuity (every job must own a steps: block or a
           # job-level uses: — phantom/lost-body job is RED even while
           # other jobs keep the zero-steps rail green).
+          # c36 legs (from a subagent 'documented vs executed' audit, each
+          # silent-green repro'd on disk before fixing): QUOTED keys
+          # ("uses": x — GitHub's parser accepts them; old KEY_RE skipped
+          # them so a disallowed tag hid in quotes) + block-scalar
+          # indentation indicators (run: |2 body was NOT opaque; 'uses:'
+          # leaked in as a fake step) + FLOW style ({steps: [{uses: …}]} —
+          # valid GitHub YAML, invisible to walk AND hole leg at once; now
+          # fail-closed RED at flow depth, benign flow like on: {…} stays
+          # green).
           python3 scripts/workflow-pins.py
 
       - name: Page meta-surface contract (A c30 port, A c33 offer)

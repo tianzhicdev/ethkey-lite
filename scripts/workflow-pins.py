@@ -39,7 +39,21 @@ import sys
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 OWN_REPO = "tianzhicdev/ethkey-lite"
 SECRETGATE_ACTION = "tianzhicdev/secretgate-action"
-KEY_RE = re.compile(r"^([A-Za-z0-9_.-]+):\s*(.*)$")
+# c36: YAML keys may be QUOTED ("uses": x, 'jobs': {…}) — GitHub's parser
+# accepts them; a walker keyed only on bare identifiers silently skips them.
+KEY_RE = re.compile(r"""^(?:"([A-Za-z0-9_.-]+)"|'([A-Za-z0-9_.-]+)'|([A-Za-z0-9_.-]+)):\s*(.*)$""")
+# c36 FLOW legs: YAML flow style ({a: b, c: d} / [x, y]) is VALID GitHub
+# workflow syntax (verified: a flow-style jobs: block parses and executes on
+# the real runner). The indent walk can't map flow content to steps, so
+# instead of pretending it doesn't exist, these legs make it LOUD: any
+# flow-style construction that can hide a `uses:` is RED (fail closed).
+FLOW_USES_RE = re.compile(r"""(?:"|')?\buses(?:"|')?\s*:\s*(?:"|')?\S""")
+FLOW_OPEN_RE = re.compile(r"^\s*(?:-\s*)?[\[{]")
+
+
+def _key_of(m):
+    """The matched key text with any quoting stripped."""
+    return m.group(1) or m.group(2) or m.group(3)
 
 
 def strip_comment(line):
@@ -55,10 +69,20 @@ def strip_comment(line):
     return line
 
 
+def block_scalar_spec(val):
+    """True if val is a block-scalar indicator: |, >, |- , >- , |+, >+ and the
+    indentation-indicator forms |2, >4- etc. (c36: ' |2' opened a real block
+    scalar GitHub treats as opaque, but the old exact-string check didn't,
+    so its body leaked into the walk)."""
+    return bool(re.fullmatch(r"[|>][0-9]*[-+]?|[|>][-+]?[0-9]*", val))
+
+
 def walk_yaml(path):
     """Yield (indent, key, value) for plain `key: value` lines that are OUTSIDE
     block scalars ('|' / '>') and not inside a block scalar's indented body.
-    Also yield ('- uses', indent_of_dash, value) for '- uses: value' items."""
+    Also yield ('- uses', indent_of_dash, value) for '- uses: value' items.
+    Keys may be quoted ("uses": x) — GitHub's YAML parser accepts that; the
+    key is yielded UNQUOTED so downstream comparisons stay simple."""
     out = []
     block_scalar_indent = None  # lines with indent >= this are opaque
     with open(path, encoding="utf-8") as fh:
@@ -81,22 +105,80 @@ def walk_yaml(path):
             if body.startswith("- "):
                 m = KEY_RE.match(body[2:].strip())
                 if m:
-                    key, val = m.group(1), m.group(2).strip()
+                    key, val = _key_of(m), m.group(4).strip()
                     # dash-prefix EVERY first key of a list item: the walker
                     # can't know which key opens the item ('- name:' opens most
                     # steps, '- uses:' opens some), and collect_uses needs the
                     # marker to know an item BEGAN at this indent.
                     out.append((ind + 2, "-" + key, val))
-                    if val in ("|", ">", "|-", ">-", "|+", ">+"):
+                    if block_scalar_spec(val):
                         block_scalar_indent = ind + 2
                 continue
             m = KEY_RE.match(body)
             if m:
-                key, val = m.group(1), m.group(2).strip()
+                key, val = _key_of(m), m.group(4).strip()
                 out.append((ind, key, val))
-                if val in ("|", ">", "|-", ">-", "|+", ">+"):
+                if block_scalar_spec(val):
                     block_scalar_indent = ind + 1
     return out
+
+
+def flow_uses(path):
+    """c36 leg: YAML FLOW style ({jobs: {x: {steps: [{uses: evil@v9}]}}}) is
+    valid GitHub workflow syntax that parses AND executes on the real runner,
+    but the indent walk can only see line-per-key BLOCK style — so a flow
+    rewrite of a workflow (or a quoted 'jobs: {…}' one-liner) makes an
+    executing uses: step INVISIBLE to every rail in this file at once: not
+    collected, not judged, not even VISIBLE to the hole tripwire (it shares
+    walk_yaml). Rather than teach the walker flow parsing, this leg reads the
+    raw lines, tracks unquoted bracket depth, and REDs any `uses:` (quoted or
+    bare) that appears at flow depth — fail closed, hand it to a human.
+    Returns [(line_no, snippet)] of offending lines."""
+    hits = []
+    depth = 0
+    in_block_body = None
+    with open(path, encoding="utf-8") as fh:
+        for n, raw in enumerate(fh, 1):
+            line = raw.rstrip("\n")
+            stripped = line.strip()
+            indent = len(line) - len(line.lstrip(" "))
+            if not stripped:
+                continue
+            if in_block_body is not None:
+                if indent >= in_block_body:
+                    continue
+                in_block_body = None
+            content = strip_comment(line).rstrip()
+            body = content.lstrip(" ")
+            if not body:
+                continue
+            m = KEY_RE.match(body[2:].strip() if body.startswith("- ") else body)
+            if m and block_scalar_spec(m.group(4).strip()) and depth == 0:
+                in_block_body = indent + 1
+                continue
+            if depth == 0 and not FLOW_USES_RE.search(body):
+                # fast path: no flow yet and no uses: pattern on this line —
+                # still must open depth if a flow construct starts here.
+                if not FLOW_OPEN_RE.search(body):
+                    continue
+            # scan chars to track bracket depth, quoting-aware
+            in_s = in_d = False
+            opened_line = False
+            for ch in body:
+                if ch == "'" and not in_d:
+                    in_s = not in_s
+                elif ch == '"' and not in_s:
+                    in_d = not in_d
+                elif in_s or in_d:
+                    continue
+                elif ch in "[{":
+                    depth += 1
+                    opened_line = True
+                elif ch in "]}":
+                    depth = max(0, depth - 1)
+            if (opened_line or depth > 0) and FLOW_USES_RE.search(body):
+                hits.append((n, stripped[:100]))
+    return hits
 
 
 def collect_uses(path):
@@ -301,11 +383,15 @@ def main() -> int:
     coverage = []   # (path, job_name, has_steps, has_job_uses)
     secrets_pin_env = set()
     holes = []
+    flow_hits = []
     bad = 0
     for path in sorted(targets):
         uses, job_cov = collect_uses(path)
         collected += [(path, label, v) for (label, v) in uses]
         coverage += [(path, j, s, u) for (j, s, u) in job_cov]
+        # c36: flow-style uses: is invisible to the indent walk AND to the
+        # hole tripwire (it shares walk_yaml) — separate raw-text leg.
+        flow_hits += [(path, n, sn) for (n, sn) in flow_uses(path)]
         # walker-hole tripwire: visible-but-not-collected uses: values.
         # c32 lesson generalized — my walker silently DROPPED a real step
         # once (strict '>' vs the '- name:'-then-sibling-'uses:' shape);
@@ -327,6 +413,17 @@ def main() -> int:
               "vacuous green tripwire is worse than none; failing.",
               file=sys.stderr)
         return 1
+    # c36 FLOW report: a `uses:` at YAML flow depth is a step GitHub's parser
+    # WILL execute while the indent walk (and thus the hole tripwire) sees
+    # nothing. Fail closed — converting a workflow to flow style must be a
+    # deliberate rewrite of this file's assumptions, never a silent skip.
+    for path, n, sn in flow_hits:
+        print(f"::error::{os.path.relpath(path, root)}:{n}: `uses:` inside "
+              f"YAML FLOW style ({sn!r}) — the indent walk cannot map flow "
+              "content to steps, so no rail here can judge it; rewrite in "
+              "block style or inspect manually. Failing closed.",
+              file=sys.stderr)
+        bad = 1
     # walker-hole report (see tripwire comment above): anything the walk can
     # SEE as a `uses:` value but collect_uses couldn't map to a step is RED —
     # either a walker hole (the c32 class) or an exotic `uses:`-named input
