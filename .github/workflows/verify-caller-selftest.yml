@@ -30,6 +30,20 @@ name: verify-caller-selftest
 # A scheduled workflow_call logs NOTHING on success, so a quiet schedule =
 # the README's exact snippet keeps working; the next green dispatch can be
 # cross-referenced against it.
+#
+# c106 fail-closed EMPTY-GATE ALARM (job `empty_gate_alarm`): the c105 K7 leg
+# proved the empty-require bless is closed END-TO-END, but only as a manual
+# one-shot dispatch. A schedule CANNOT drive the workflow_call empty leg (the
+# API default-substitution class found at c105), so the alarm hits the SAME
+# refusal point from the tool's own args layer: it runs the tool at the
+# DOCUMENTED pin (v1.1, the same string verify-release.yml's ethkey-ref
+# default ships to consumers) against the real v1.1 receipt with a TRUE empty
+# --require and FAILS unless the tool refuses (exit 2, message names the
+# empty gate). Non-vacuity measured pre-push (c106 W3): the pre-fix v0.9 tool
+# blesses this exact leg (rc=0 'result: OK'), so a green alarm means the fix
+# is alive, not that the leg is dead. Daily schedule + dispatch: a RED alarm =
+# the fleet-wide empty-gate bless (A's c105 find) has regressed at the pin
+# every consumer copies.
 
 on:
   workflow_dispatch:
@@ -90,3 +104,44 @@ jobs:
           LOWER=$(printf '%s' "$SIGNER" | tr 'A-Z' 'a-z')
           test "$LOWER" = "0xf232dcdc177b53981b4d805a48c79f239db8d0f9" || { echo "FAIL: signer output != C wallet addr (case-folded)"; exit 1; }
           echo "OK: workflow_call inputs + signer job-output wiring proven from the caller side (case-folded compare)"
+
+  # c106 fail-closed EMPTY-GATE ALARM. Runs on the daily schedule AND after
+  # `verify` on any dispatch (needs: verify keeps the alarm's verdict
+  # independent of the gate leg it accompanies). It checks out the tool AT THE
+  # DOCUMENTED PIN v1.1 (single checkout: the tag carries tool + receipt),
+  # then demands the args-layer refusal for a TRUE empty --require. A rc
+  # alone is transport (missing file, wrong python), so the refusal MESSAGE
+  # must also appear. If this job goes RED, the empty-gate bless A found at
+  # c105 is alive again at the exact ref consumers copy — every release gate
+  # fleet-wide is suspect until re-proven.
+  empty_gate_alarm:
+    needs: verify
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ethkey-lite at the documented pin
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: v1.1
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - name: Install dependency
+        run: pip install --quiet pycryptodome
+      - name: Empty --require against real v1.1 receipt MUST be refused
+        run: |
+          set -euo pipefail
+          # Teeth measured pre-push (c106 W3): pre-fix v0.9 tool blesses this
+          # exact leg (rc=0, result: OK) — so PASS here is not vacuous.
+          set +e
+          OUT="$(python3 ethkey.py verify proofs/v1.1-workflow-defaults.md --require '' 2>&1)"
+          RC=$?
+          set -e
+          printf '%s\n' "$OUT"
+          if [ "$RC" -eq 2 ] && printf '%s' "$OUT" | grep -q -- '--require value is empty'; then
+            echo "OK: empty-gate refusal alive at pin v1.1 (rc=2 + refusal message)"
+          else
+            echo "FAIL: empty --require was NOT refused (rc=$RC) — empty-gate bless regression"
+            exit 1
+          fi
