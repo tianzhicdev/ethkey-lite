@@ -36,6 +36,19 @@ Checks (exit 1 on any violation, exit 2 on missing inputs — fail-closed):
      'invalid path .git/...'. The exemption can never mask a tracked file
      because the tracked file cannot exist; tracked-first ORDER is therefore
      not needed here (documented, not assumed).
+     SCOPE-ASSERT (B c45 offer, shipped A-shape via A c56): the exemption
+     set itself is audited — every exempted name must be `.git` or start
+     with `.git/` (canonical, normalized-at-collection form), else it is a
+     DEAD REF R IDING THE CARVE-OUT and the run goes RED naming each such
+     name as 'carve-out: <name>'. Without this, the exempt-everything
+     mutant (branch condition -> always true) swallowed every dead ref and
+     still printed rc=0; only the flip harness knew. Now the VERDICT knows:
+     same rc=1, different authority — the RED names 'carve-out', never
+     'not tracked', so a reader can tell which leg killed it (A c56
+     precision lesson). The predicate is membership-strict (== '.git' or
+     startswith '.git/'): a startswith('.git') mutant would exempt
+     `.github/workflows/x` and still pass a sloppy scope test — measured
+     before shipped.
   B. .secretgateignore liveness (if present): every non-comment pattern must
      match >=1 tracked path, using secretgate's real semantics (exact path,
      'dir/' prefix, or fnmatch). A pattern matching NOTHING is a dead
@@ -167,10 +180,22 @@ def main():
     for d in dead:
         print(f"FAIL: README references a path that is not tracked: {d}")
         fails += 1
-    if not dead:
+    # SCOPE-ASSERT (B c45 offer, A c56 shape): the exemption set is audited
+    # INDEPENDENTLY of the branch that filled it. The branch predicate above
+    # can be mutated (exempt-everything) while this predicate stays honest —
+    # two sites, same truth, and a mutant that edits one is caught by the
+    # other. Membership-strict on the CANONICAL (normalized-at-collection)
+    # form: `== ".git"` or `.git/` prefix. A sloppier startswith(".git")
+    # scope test would bless a `.github/...` swallow — measured, see V-class
+    # flips in dead-ref-flip-harness.sh.
+    uniq_rt = sorted(set(runtime_skipped))
+    over = [n for n in uniq_rt if n != ".git" and not n.startswith(".git/")]
+    for n in over:
+        print(f"FAIL: exemption outside .git/ carve-out: {n}")
+        fails += 1
+    if not dead and not over:
         # printed exemption count (A c51 rule): the carve-out never skips
         # silently, and a flip can assert it fired on EXACTLY its mutation.
-        uniq_rt = sorted(set(runtime_skipped))
         ok(f"README prose paths all resolve ({len(seen)} checked: files + dirs; "
            f"runtime-scope .git/ exemptions: {len(uniq_rt)}"
            + (f" [{', '.join(uniq_rt)}]" if uniq_rt else "") + ")")

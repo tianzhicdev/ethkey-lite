@@ -112,6 +112,109 @@ grep -q 'src/.git/bait-flip.md' "$d/README.md" || { echo "MUTATION-FAILED F8"; e
 out=$(run "$d" 2>&1); rc=$?
 check F8_nested_dotgit_still_red 1 "$rc" "$out" "src/.git/bait-flip.md"
 
+# ---- V-class (c50): scope-assert over the EXEMPT set (B c45 offer, A c56
+# shape). Synthetic tree so the exempt set has a controlled denominator;
+# fresh build per flip like the clone-per-flip rule above. ----
+synth() { # $1 = dir name; builds a committed synth repo w/ 3 runtime refs
+  local d="$BASE/$1"
+  rm -rf "$d"; mkdir -p "$d"
+  ( cd "$d" && git init -q . && git config user.email f@f && git config user.name f \
+    && printf '# Synth\n\nSee `a/b.md` and `./.git/hooks/flip/` plus `.git/` bare and `./.git/hookpack/cache/`.\n' > README.md \
+    && mkdir -p a && printf 'y\n' > a/b.md && git add -A && git commit -qm init ) \
+    || { echo "SYNTH-FAILED $1"; exit 1; }
+  echo "$d"
+}
+RRAIL="$SRC/scripts/dead-ref-check.py"
+
+# V1: post-fix rail GREEN on synth + canonical (normalized) printed set +
+#     honest checked-count (1 real ref, exemptions do NOT inflate it).
+d=$(synth v1); out=$(cd "$d" && python3 "$RRAIL" 2>&1); rc=$?
+if [ "$rc" = 0 ] && grep -q '1 checked' <<<"$out" \
+   && grep -q 'exemptions: 3 \[.git, .git/hookpack/cache, .git/hooks/flip\]' <<<"$out"; then
+  echo "PASS[V1_synth_green_canonical_print]"; pass=$((pass+1))
+else
+  echo "FAIL[V1_synth_green_canonical_print] rc=$rc:"; echo "$out" | sed 's/^/    /'; fail=$((fail+1))
+fi
+
+# V2t: truth+bait — dead ref in synth README, honest rail: rc=1 whose
+#     authority is the DEAD leg ('not tracked'), never 'carve-out'.
+d=$(synth v2t); printf '\nSee `does-not-exist-c50/missing.md` for context.\n' >> "$d/README.md"
+git -C "$d" add -A >/dev/null && git -C "$d" commit -qm bait >/dev/null
+out=$(cd "$d" && python3 "$RRAIL" 2>&1); rc=$?
+if [ "$rc" = 1 ] && grep -q 'not tracked: does-not-exist-c50/missing.md' <<<"$out" \
+   && ! grep -q 'carve-out' <<<"$out"; then
+  echo "PASS[V2t_truth_bait_dead_leg_authority]"; pass=$((pass+1))
+else
+  echo "FAIL[V2t_truth_bait_dead_leg_authority] rc=$rc:"; echo "$out" | sed 's/^/    /'; fail=$((fail+1))
+fi
+
+# V2a: exempt-everything MUTANT on the SAME baited tree: scope-assert makes
+#     it a VERDICT — rc=1 naming 'carve-out: <bait>', and precision: the
+#     bait must NOT also reach the dead leg (same rc, different authority
+#     must be distinguishable from the print, A c56).
+mut="$BASE/exemptall.py"
+python3 - "$RRAIL" "$mut" <<'PYEOF' || { echo "MUTATION-FAILED V2a"; exit 1; }
+import sys
+src = open(sys.argv[1]).read()
+old = 'if rel.split("/")[0] == ".git":'
+assert src.count(old) == 1
+open(sys.argv[2], "w").write(src.replace(old, "if True:"))
+PYEOF
+out=$(cd "$d" && python3 "$mut" 2>&1); rc=$?
+if [ "$rc" = 1 ] && grep -q 'carve-out: does-not-exist-c50/missing.md' <<<"$out" \
+   && ! grep -q 'not tracked' <<<"$out"; then
+  echo "PASS[V2a_exemptall_scope_verdict_names_bait]"; pass=$((pass+1))
+else
+  echo "FAIL[V2a_exemptall_scope_verdict_names_bait] rc=$rc:"; echo "$out" | sed 's/^/    /'; fail=$((fail+1))
+fi
+
+# V2b: same mutant with the SCOPE-ASSERT STRIPPED: rc=0, bait swallowed
+#     into the printed exempt set = the OLD blessing reproduced on demand.
+mut2="$BASE/exemptall-noscope.py"
+python3 - "$RRAIL" "$mut2" <<'PYEOF' || { echo "MUTATION-FAILED V2b"; exit 1; }
+import sys
+src = open(sys.argv[1]).read()
+a = 'over = [n for n in uniq_rt if n != ".git" and not n.startswith(".git/")]'
+old = 'if rel.split("/")[0] == ".git":'
+assert src.count(a) == 1 and src.count(old) == 1
+open(sys.argv[2], "w").write(src.replace(old, "if True:").replace(a, "over = []"))
+PYEOF
+out=$(cd "$d" && python3 "$mut2" 2>&1); rc=$?
+if [ "$rc" = 0 ] && grep -q 'exemptions: 5' <<<"$out" \
+   && grep -q 'does-not-exist-c50/missing.md' <<<"$out"; then
+  echo "PASS[V2b_scope_stripped_blessing_reproduced]"; pass=$((pass+1))
+else
+  echo "FAIL[V2b_scope_stripped_blessing_reproduced] rc=$rc:"; echo "$out" | sed 's/^/    /'; fail=$((fail+1))
+fi
+
+# V3: SLOPPY-BRANCH mutant (exempt predicate startswith('.git') = swallows
+#     `.github/...` too) while the scope-assert stays honest: rc=1 naming
+#     the swallowed .github ref = the scope predicate is membership-strict,
+#     not just non-empty.
+d3=$(synth v3); mkdir -p "$d3/docs"; printf 'y\n' > "$d3/docs/x.md"
+printf '\nAlso see `docs/x.md` and `.github/workflows/delta.md`.\n' >> "$d3/README.md"
+git -C "$d3" add -A >/dev/null && git -C "$d3" commit -qm v3 >/dev/null
+# honest rail first: .github/workflows/delta.md must be a plain DEAD ref
+out=$(cd "$d3" && python3 "$RRAIL" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q 'not tracked: .github/workflows/delta.md' <<<"$out" \
+  || { echo "MUTATION-FAILED V3 (precond: honest rail must RED the .github ref)"; echo "$out"; exit 1; }
+mut3="$BASE/sloppybranch.py"
+python3 - "$RRAIL" "$mut3" <<'PYEOF' || { echo "MUTATION-FAILED V3"; exit 1; }
+import sys
+src = open(sys.argv[1]).read()
+old = 'if rel.split("/")[0] == ".git":'
+assert src.count(old) == 1
+m = src.replace(old, 'if rel.startswith(".git"):')
+assert m != src
+open(sys.argv[2], "w").write(m)
+PYEOF
+out=$(cd "$d3" && python3 "$mut3" 2>&1); rc=$?
+if [ "$rc" = 1 ] && grep -q 'carve-out: .github/workflows/delta.md' <<<"$out"; then
+  echo "PASS[V3_sloppy_branch_scope_strict]"; pass=$((pass+1))
+else
+  echo "FAIL[V3_sloppy_branch_scope_strict] rc=$rc:"; echo "$out" | sed 's/^/    /'; fail=$((fail+1))
+fi
+
 echo "dead-ref flip harness: $pass PASS, $fail FAIL"
 rm -rf "$BASE"
 [ "$fail" = 0 ]
