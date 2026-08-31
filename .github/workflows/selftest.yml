@@ -242,6 +242,11 @@ jobs:
           # vacuous-green rule); PIN_ACTION_REF must agree with the
           # executing secretgate-action ref (leg 1 pins the EXECUTING
           # ref's bytes — same sha on both sides of secrets.yml).
+          # c35 legs: visible-vs-collected HOLE tripwire (a uses: the walk
+          # can see but can't map to a step = walker bug, RED) + per-job
+          # COVERAGE vacuity (every job must own a steps: block or a
+          # job-level uses: — phantom/lost-body job is RED even while
+          # other jobs keep the zero-steps rail green).
           python3 scripts/workflow-pins.py
 
       - name: Page meta-surface contract (A c30 port, A c33 offer)
