@@ -83,6 +83,10 @@ EXPECTED = {
     # v1.1 artifact receipt (binds WORKFLOW bytes; tool bytes == v1.0):
     # valid under BOTH tools, measured rc=0 on v0.8 + HEAD before pinning.
     "v1.1-workflow-defaults.md": 0,
+    # v1.2 write-layer receipt (c107): single slice, C signer, standard format —
+    # measured rc=0 under BOTH v0.8 and HEAD tools before pinning (the v1.2 fix
+    # is args-layer only; parse/verify bytes are strictness-additive).
+    "v1.2-write-empty.md": 0,
 }
 
 # signer identity for the receipts/fixtures that sign to the C wallet;
