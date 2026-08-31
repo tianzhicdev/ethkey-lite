@@ -56,6 +56,14 @@ def add(p, q):
 
 
 def mul(k, p):
+    # c111 (A c114 law: guard the PARAMETER at every layer): k outside
+    # [1, N-1] was a live footgun at BOTH doors — k <= 0 made the `while k`
+    # loop unbounded (negative k >> 1 never reaches 0: `address -1` spun
+    # forever), k == 0 returned None and crashed downstream with a
+    # TypeError. Every legitimate caller (RFC 6979 k, s, r^-1, -z mod N)
+    # already lands in [1, N-1], so refusing is strictness-additive.
+    if not isinstance(k, int) or not (1 <= k < N):
+        raise ValueError(f'scalar multiplier out of range (must be 1..N-1), got {k!r}')
     r = None
     while k:
         if k & 1:
@@ -95,6 +103,9 @@ def pk_hexstr(sk_int: int) -> str:
 
 
 def address_from_pk(sk_int: int) -> str:
+    # c111: refuse out-of-range keys BEFORE the curve math (see mul guard).
+    if not isinstance(sk_int, int) or not (1 <= sk_int < N):
+        raise ValueError(f'private key out of range (must be 1..N-1), got {sk_int!r}')
     pub = mul(sk_int, G)
     raw = '0x' + keccak256(pub[0].to_bytes(32, 'big') + pub[1].to_bytes(32, 'big'))[12:].hex()
     return checksum_address(raw)
@@ -153,8 +164,15 @@ def _recover_hash(z_int: int, r: int, s: int, rec_id: int):
         y = P - y
     R = (x, y)
     r_inv = inv(r, N)
-    point = add(mul(s, R), mul((-z_int) % N, G))
-    Q = mul(r_inv, point)
+    try:
+        point = add(mul(s, R), mul((-z_int) % N, G))
+        Q = mul(r_inv, point)
+    except ValueError:
+        # c111: z mod N == 0 (or degenerate recovery) hits the mul range
+        # guard; surface as the documented malformed-signature class, not a
+        # crash. Not constructible with a real message (astronomically rare
+        # digest), pinned at the function boundary in selftest.
+        return None
     if Q is None:
         return None
     return '0x' + keccak256(Q[0].to_bytes(32, 'big') + Q[1].to_bytes(32, 'big'))[12:].hex()
@@ -168,6 +186,11 @@ def personal_digest(message: bytes) -> int:
 
 
 def sign_message(message: bytes, priv_int: int) -> str:
+    # c111: same parameter-door guard (library callers included): priv 0 or
+    # >= N is not a key — the old path signed pk=0 happily (degenerate key,
+    # Q = point at infinity territory) and mul() would TypeError/None-crash.
+    if not isinstance(priv_int, int) or not (1 <= priv_int < N):
+        raise ValueError(f'private key out of range (must be 1..N-1), got {priv_int!r}')
     r, s, rec_id = _sign_hash(personal_digest(message), priv_int)
     return '0x' + r.to_bytes(32, 'big').hex() + s.to_bytes(32, 'big').hex() + (27 + rec_id).to_bytes(1, 'big').hex()
 
@@ -303,6 +326,43 @@ def selftest() -> bool:
     assert okp, f'padded valid require must gate+pass after normalize: {rp}'
     okb2, _, rb2 = verify_proof(md_w, require=address_from_pk(9))
     assert not okb2 and 'is not required' in rb2, 'wrong valid require still FAILs'
+    # c111 find (closed here): the PARSE/RANGE door at BOTH layers (A c114
+    # law — guard the parameter at every layer, not the flag at one). Pre-fix
+    # measured: address_from_pk(0) -> TypeError NoneType-subscript;
+    # address_from_pk(-1) -> INFINITE LOOP in mul (k >>= 1 on a negative
+    # never terminates — a hang, worse than a crash); sign_message(b, 0) ->
+    # blessed a signature for a degenerate key; CLI `address zzz` -> raw
+    # int() traceback. Now every out-of-range scalar raises ValueError at the
+    # function body, and mul itself refuses so NO caller can re-open the hang.
+    for bad_pk, tag in ((0, 'zero'), (-1, 'negative'), (N, 'N'), (N + 7, 'above N')):
+        try:
+            address_from_pk(bad_pk)
+            raise AssertionError(f'address_from_pk({tag}) must raise ValueError')
+        except ValueError as e111:
+            assert 'range' in str(e111), f'address_from_pk refuse must name range: {e111}'
+        try:
+            sign_message(b'x', bad_pk)
+            raise AssertionError(f'sign_message({tag}) must raise ValueError')
+        except ValueError as e111s:
+            assert 'range' in str(e111s), f'sign_message refuse must name range: {e111s}'
+    try:
+        mul(-1, G)
+        raise AssertionError('mul must refuse negative scalars (the hang door)')
+    except ValueError as e_mul:
+        assert 'range' in str(e_mul), f'mul refuse must name range: {e_mul}'
+    assert mul(1, G) == G, 'mul happy path intact (refuse did not over-broaden)'
+    assert _pk_arg('1') == 1 and _pk_arg('0x1') == 1 and _pk_arg('0X1') == 1, \
+        'pk arg bare/0x/0X all valid (documented short form stays legal)'
+    for junk in ('', '   ', '0x', 'zzz', '0 x41'):
+        try:
+            _pk_arg(junk)
+            raise AssertionError(f'_pk_arg({junk!r}) must raise')
+        except ValueError:
+            pass
+    # degenerate-recovery door: z=0 makes (-z)%N==0 hit the mul guard;
+    # _recover_hash must return None (CLI -> 'recovery failed' exit 2),
+    # never crash. Synthetic z=0 leg (not constructible via a real digest).
+    assert _recover_hash(0, 1, 1, 0) is None, 'z=0 recovery must be None not crash'
     return True
 
 
@@ -455,6 +515,26 @@ def verify_proof(md: str, require=None):
 HELP_FLAGS = ('--help', '-h')
 
 
+def _pk_arg(s):
+    """Parse a private-key hex arg/env value into an int (c111).
+
+    The old inline `int(x.removeprefix('0x'), 16)` traced back on ANY junk
+    ('zzz', '', '0 x41', a truthy-but-empty-prefixed '0x') — and for a
+    well-formed-but-out-of-range value it happily walked into the curve
+    math (pk=0 crash, pk=-1/pk>=N nonsense, see mul guard). A CI variable
+    that expands to garbage is the realistic trigger; a clean exit-2 line
+    naming the problem is the contract (same class as --require refuses).
+    Accepts bare or 0x/0X-prefixed hex, case-insensitive, permissive length
+    (canonical 64 but '1' stays valid — documented example uses it)."""
+    t = (s or '').strip()
+    if not t:
+        raise ValueError('empty value is not a private key')
+    t = t[2:] if t[:2].lower() == '0x' else t
+    if not t or any(c not in '0123456789abcdefABCDEF' for c in t):
+        raise ValueError(f'not valid hex: {s!r}')
+    return int(t, 16)
+
+
 def _take(rest, name):
     """Return (value, new_rest, error). error is a message string or None."""
     if name not in rest:
@@ -502,15 +582,27 @@ def main(argv):
         print('private_key_hex:', pk_hexstr(sk))
         print('WARNING: handle the private key like a password. Never paste it into logs, chats, or repos.')
     elif cmd == 'address' and len(argv) == 3:
-        print(address_from_pk(int(argv[2].removeprefix('0x'), 16)))
+        try:
+            print(address_from_pk(_pk_arg(argv[2])))
+        except ValueError as e:
+            print(f'error: {e}', file=sys.stderr)
+            return 2
     elif cmd == 'checksum' and len(argv) == 3:
-        print(checksum_address(argv[2]))
+        try:
+            print(checksum_address(argv[2]))
+        except ValueError as e:
+            print(f'error: {e} (want 40 hex digits, 0x optional)', file=sys.stderr)
+            return 2
     elif cmd == 'sign' and len(argv) == 3:
         pk_hex = os.environ.get('ETHKEY_PK')
         if not pk_hex:
             print('error: set ETHKEY_PK env var (key never appears in argv)', file=sys.stderr)
             return 2
-        print(sign_message(argv[2].encode(), int(pk_hex.removeprefix('0x'), 16)))
+        try:
+            print(sign_message(argv[2].encode(), _pk_arg(pk_hex)))
+        except ValueError as e:
+            print(f'error: ETHKEY_PK: {e}', file=sys.stderr)
+            return 2
     elif cmd == 'recover' and len(argv) == 5:
         try:
             rec = recover_message(argv[3].encode(), argv[4])
@@ -558,7 +650,11 @@ def main(argv):
         if not pk_hex:
             print('error: set ETHKEY_PK env var (key never appears in argv)', file=sys.stderr)
             return 2
-        md = make_proof(payload, int(pk_hex.removeprefix('0x'), 16), note)
+        try:
+            md = make_proof(payload, _pk_arg(pk_hex), note)
+        except ValueError as e:
+            print(f'error: ETHKEY_PK: {e}', file=sys.stderr)
+            return 2
         if out:
             try:
                 with open(out, 'w') as f:

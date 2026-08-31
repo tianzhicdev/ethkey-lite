@@ -56,6 +56,14 @@ otherwise, 2 when the signature is malformed or carries an invalid recovery
 id / out-of-range r or s (strict input validation, matching ethers.js v6:
 only v ∈ {0,1,27,28} is accepted) — usable in scripts and CI.
 
+Malformed KEY input is also exit 2, never a stack trace: `address`/`checksum`
+with non-hex or wrong-length values, a private key outside 1..N-1 (0 and
+negative keys used to crash or spin forever in the curve math), and a
+truthy-but-junk `ETHKEY_PK` (the CI-variable-expands-to-garbage shape) all
+print a one-line error naming the problem and exit 2. The same range
+contract is enforced at the library layer (`address_from_pk`,
+`sign_message`, `mul`), not just the CLI.
+
 Example (public test vector, safe to run):
 
 ```

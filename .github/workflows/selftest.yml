@@ -645,6 +645,56 @@ jobs:
             case "$ERR" in *Traceback*) echo "FAIL: malformed sig printed a traceback"; exit 1;; esac
           done
           echo "OK: recover malformed-v / short-sig / r=0 -> exit 2, no traceback (documented contract)"
+          # c111 PARSE/RANGE door pins (A c114 law: guard the parameter at
+          # every layer): pre-fix these CRASHED or HUNG — `address zzz` and
+          # junk ETHKEY_PK printed raw int() tracebacks (rc=1); `address 0`
+          # was a NoneType TypeError; `address -1` SPUN FOREVER (mul's
+          # `while k` + right-shift on a negative never terminates). Now all
+          # refuse exit 2 clean. TIMEOUT per leg: a hang is the worst shape
+          # and rc can't see it — timeout kills it and FAILS the step.
+          set +e
+          timeout 15 python3 ethkey.py address zzz >/dev/null 2>err111.txt; code=$?
+          set -e
+          [ "$code" -eq 2 ] || { echo "FAIL: 'address zzz' exited $code (timeout=hang), expected 2"; exit 1; }
+          case "$(cat err111.txt)" in *Traceback*) echo "FAIL: 'address zzz' printed a traceback"; exit 1;; esac
+          for A in "" "0 x41" "0" "-1"; do
+            set +e
+            ERR=$(timeout 15 python3 ethkey.py address "$A" 2>&1 >/dev/null); code=$?
+            set -e
+            [ "$code" -eq 2 ] || { echo "FAIL: 'address $A' exited $code (124=hang), expected 2"; exit 1; }
+            case "$ERR" in *Traceback*) echo "FAIL: 'address $A' printed a traceback"; exit 1;; esac
+          done
+          for A in zzz ""; do
+            set +e
+            ERR=$(timeout 15 python3 ethkey.py checksum "$A" 2>&1 >/dev/null); code=$?
+            set -e
+            [ "$code" -eq 2 ] || { echo "FAIL: 'checksum $A' exited $code, expected 2"; exit 1; }
+            case "$ERR" in *Traceback*) echo "FAIL: 'checksum $A' printed a traceback"; exit 1;; esac
+          done
+          # junk ETHKEY_PK (truthy-but-unusable): the CI-var-garbage shape
+          for P in zzz "   " 0x; do
+            set +e
+            ERR=$(ETHKEY_PK="$P" timeout 15 python3 ethkey.py sign hi 2>&1 >/dev/null); code=$?
+            set -e
+            [ "$code" -eq 2 ] || { echo "FAIL: junk ETHKEY_PK '$P' exited $code, expected 2"; exit 1; }
+            case "$ERR" in *Traceback*) echo "FAIL: junk ETHKEY_PK '$P' printed a traceback"; exit 1;; esac
+            case "$ERR" in *ETHKEY_PK*) : ;; *) echo "FAIL: junk-PK message must name ETHKEY_PK: $ERR"; exit 1;; esac
+          done
+          # out-of-range keys (N and N+7 derived FROM THIS MODULE, never
+          # hand-typed — B c101 law): refuse at the CLI too.
+          NLINE=$(python3 -c 'import ethkey; print(ethkey.N)')
+          for A in "$NLINE" "$((NLINE + 7))"; do
+            set +e
+            ERR=$(timeout 15 python3 ethkey.py address "$A" 2>&1 >/dev/null); code=$?
+            set -e
+            [ "$code" -eq 2 ] || { echo "FAIL: address(pk>=N) exited $code, expected 2"; exit 1; }
+            case "$ERR" in *Traceback*) echo "FAIL: address(pk>=N) printed a traceback"; exit 1;; esac
+          done
+          # scope cells (no over-refuse): documented short form + vector key
+          python3 ethkey.py address 1 | grep -q 7E5F4552 || { echo "FAIL: pk=1 short form broke"; exit 1; }
+          ETHKEY_PK=$(printf '46%.0s' $(seq 32)) python3 ethkey.py sign hi >/dev/null || { echo "FAIL: valid 64-hex ETHKEY_PK broke"; exit 1; }
+          rm -f err111.txt
+          echo "OK: c111 parse/range crash+hang matrix -> exit 2 clean, scope cells legal (no over-refuse)"
           # c30 gap #6: the README's run-it-yourself negative control names a
           # CLI COMMAND with a documented exit code; prior pins asserted the
           # library function only. Execute the exact documented command.
