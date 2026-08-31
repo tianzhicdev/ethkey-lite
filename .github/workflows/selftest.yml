@@ -281,11 +281,17 @@ jobs:
           python3 scripts/check-sitemap-git-truth.py
 
       - name: Release assets x committed proofs parity (c28 reverse-direction pin)
+        env:
+          # c43 (A c51 fleet offer): unauth api.github.com = 60/h per SHARED
+          # runner IP - a STRUCTURAL cap, retries cannot fix exhaustion (their
+          # hookpack run died on exactly this after 4 retries). Runner token =
+          # 5000/h; the rail attaches it ONLY to exact-host api.github.com.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # c28 audit (B's c25 stale-companion class, applied to MY surface):
+          # c28 audit (B's stale-companion class, applied to MY surface):
           # README + landing claim 'Every release carries a signed receipt'
-          # was pinned in ONE direction only — every proofs/v*.md verifies via
+          # was pinned in ONE direction only - every proofs/v*.md verifies via
           # CLI. Nothing walked the REVERSE rails:
           #   (a) every GitHub release ASSET must exist in proofs/ byte-
           #       identically (silently re-uploading an altered asset = the
@@ -295,77 +301,12 @@ jobs:
           #       lie for that tag);
           #   (c) an asset's version must equal its release tag's version.
           # Live baseline at ship time: 5 tags / 5 pairs, all byte-equal.
-          python3 - <<'EOF'
-          import hashlib, json, os, re, sys, urllib.request
-          def get(u, raw=False):
-              # 1-attempt fetch went red on the runner with a transient
-              # 504 from the asset CDN (c30): a flake must not flip the
-              # receipt-parity gate. 3 attempts, backoff, then die loud.
-              import time
-              last = None
-              for attempt in range(3):
-                  try:
-                      req = urllib.request.Request(
-                          u, headers={'User-Agent': 'ethkey-lite-selftest',
-                                      'Accept': 'application/vnd.github+json'})
-                      d = urllib.request.urlopen(req, timeout=30).read()
-                      return d if raw else json.loads(d)
-                  except Exception as e:
-                      last = e
-                      if attempt < 2:
-                          time.sleep(2 ** attempt * 3)
-              raise SystemExit(f'FAIL: fetch failed after 3 attempts ({u}): {last}')
-          rel = get('https://api.github.com/repos/tianzhicdev/'
-                    'ethkey-lite/releases?per_page=100')
-          assert rel, 'FAIL: repo reports zero releases'
-          errors = []
-          attached = set()
-          for r in rel:
-              tag = r['tag_name']
-              # c30 gap #2: the claim is 'every release ships a receipt' — a
-              # release with ZERO assets passes every other rail vacuously.
-              if not r['assets']:
-                  errors.append(f'{tag}: release has NO assets (claim false for this tag)')
-                  continue
-              tv = re.fullmatch(r'v(\d+)\.(\d+)(?:\.(\d+))?', tag)
-              assert tv, f'FAIL: non-semver tag {tag}'
-              for a in r['assets']:
-                  name = a['name']
-                  attached.add(name)
-                  av = re.fullmatch(r'v(\d+)\.(\d+)(?:\.(\d+))?.*\.md', name)
-                  if not av:
-                      errors.append(f'{tag}: asset {name} is not version-named')
-                      continue
-                  norm = lambda g: tuple(x or '0' for x in g)  # v0.8 == v0.8.0
-                  if norm(av.groups()) != norm(tv.groups()):
-                      errors.append(f'{tag}: asset {name} version != tag version')
-                  local = os.path.join('proofs', name)
-                  if not os.path.isfile(local):
-                      errors.append(f'{tag}: asset {name} has NO committed file in proofs/')
-                      continue
-                  live = get(a['browser_download_url'], raw=True)
-                  committed = open(local, 'rb').read()
-                  if live != committed:
-                      errors.append(
-                          f'{tag}: asset {name} bytes != committed proofs/{name} '
-                          f'(sha256 {hashlib.sha256(live).hexdigest()[:12]} vs '
-                          f'{hashlib.sha256(committed).hexdigest()[:12]})')
-                  else:
-                      print(f'OK: {tag} asset == committed proofs/{name} '
-                            f'({hashlib.sha256(committed).hexdigest()[:12]})')
-          committed_vr = {f for f in os.listdir('proofs')
-                          if re.fullmatch(r'v\d+\.\d+[^_]*\.md', f)}
-          missing = sorted(committed_vr - attached)
-          if missing:
-              errors.append('committed version receipts never attached to any '
-                            'release: ' + ', '.join(missing))
-          if errors:
-              for e in errors:
-                  print('FAIL:', e)
-              sys.exit(1)
-          print(f'OK: release<->proofs parity table: {len(rel)} releases, '
-                f'{len(attached)} assets, {len(committed_vr)} committed version receipts')
-          EOF
+          # c43: logic moved VERBATIM to scripts/release-assets-parity.py +
+          # host-scoped token auth, fail-closed CI wiring (missing token =
+          # exit 2, no silent unauth carve-out), and 4xx fails fast
+          # (structural != transient). --selftest proves the credential
+          # matrix offline; flip harness ships next to the rail.
+          python3 scripts/release-assets-parity.py
 
       - name: verify.html vectors x Python CLI + internal links + footer addr pins (audit #24/#25/#30)
         run: |
