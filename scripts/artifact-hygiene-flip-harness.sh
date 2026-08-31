@@ -7,7 +7,11 @@
 # assert before trusting any RED.
 #   CONTROL green / F1 blocklist-name re-added / F2 renamed-byproduct .md
 #   off-blocklist / F3 untracked-in-worktree must NOT trip / F4 vacuous
-#   non-repo dies exit 2 / F5 *.out sweep by extension.
+#   non-repo dies exit 2 / F5 *.out sweep by extension / F6 tracked file
+#   under a DERIVED actions/checkout path: = RED (c44 leg D; the name is
+#   NOT on any hand-maintained list — derivation must find it) / F7 the
+#   must-STILL-be-GREEN twin: same dir on disk untracked stays GREEN
+#   (c38 exclusion-needs-a-twin rule).
 set -u
 SRC="$1"   # repo worktree to copy
 HARNESS_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -74,5 +78,30 @@ out=$(run_rail .); code=$?
 echo "$out" | grep -q 'probe.out' || { echo "FAIL[F5]: RED does not name probe.out"; fails=1; }
 echo "OK[F5]: tracked *.out RED by extension sweep"
 
+# F6 — c44 leg D: a tracked file under a checkout-path prefix that is NOT
+# on the hand-maintained blocklist. If leg D only worked by name-listing,
+# this flip is GREEN-for-wrong-reason-adjacent: the derivation must find
+# .ethkey-tools/ purely from the workflow YAML text.
+D=$(fresh_copy f6); cd "$D"
+mkdir -p .ethkey-tools && echo "print()" > .ethkey-tools/ethkey.py && git add -f .ethkey-tools/ethkey.py
+git ls-files | grep -qx '.ethkey-tools/ethkey.py' || { echo "FAIL[F6]: mutation not in ls-files"; fails=1; }
+out=$(run_rail .); code=$?
+[ $code -eq 1 ] || { echo "FAIL[F6]: exit $code, expected 1 (derivation missed it?)"; echo "$out"; fails=1; }
+echo "$out" | grep -q '.ethkey-tools/ethkey.py' || { echo "FAIL[F6]: RED does not name the path"; fails=1; }
+echo "OK[F6]: tracked clone under derived checkout path RED"
+
+# F7 — must-STILL-be-GREEN twin: the LEGITIMATE CI run clones into
+# .ethkey-tools/ on disk. Rail checks the index, not the disk: GREEN.
+# (c38: an exclusion without a proven-GREEN twin is a hole with a name.)
+D=$(fresh_copy f7); cd "$D"
+mkdir -p .ethkey-tools && echo "print()" > .ethkey-tools/ethkey.py
+# twin landed: file ON DISK, gitignored (new .gitignore leg) and NOT in the index
+[ -f .ethkey-tools/ethkey.py ] || { echo "FAIL[F7]: twin file absent"; fails=1; }
+git ls-files | grep -qx '.ethkey-tools/ethkey.py' && { echo "FAIL[F7]: twin landed IN the index = not the twin"; fails=1; }
+git check-ignore -q .ethkey-tools/ethkey.py || { echo "FAIL[F7]: clone path not gitignored (a bare 'git add -A' would re-track it)"; fails=1; }
+out=$(run_rail .); code=$?
+[ $code -eq 0 ] || { echo "FAIL[F7]: exit $code, expected 0 (rail checks disk not index?)"; echo "$out"; fails=1; }
+echo "OK[F7]: untracked clone on disk = GREEN (index-not-disk, twin proven)"
+
 cd /; rm -rf /tmp/c40-flips
-[ $fails -eq 0 ] && echo "FLIPS: 6/6 OK" || { echo "FLIPS: FAILURES"; exit 1; }
+[ $fails -eq 0 ] && echo "FLIPS: 8/8 OK" || { echo "FLIPS: FAILURES"; exit 1; }

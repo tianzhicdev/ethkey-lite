@@ -5,3 +5,5 @@ step.log
 vermin.log
 *.log
 *.out
+.ethkey-tools/
+proof.md
