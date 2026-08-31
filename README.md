@@ -87,7 +87,7 @@ Any repo whose releases ship an ethkey-lite receipt (e.g.
 ```yaml
 jobs:
   verify:
-    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.9
+    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v1.1
     with:
       receipt: proofs/release-proof.md   # path in YOUR repo
       require: "0xYourWalletAddress"     # QUOTE the address!
@@ -214,7 +214,10 @@ newest version verified, each standalone.
   130 hex chars with recovery id in {0, 1, 27, 28} and 0 < r, s < n —
   byte-parity with ethers v6. Tags before v0.8 accepted any
   parity-matching invalid recovery byte (e.g. `v=ff` recovered the true
-  signer of a rec-id-0 receipt); if you pin the tool in CI, pin @v0.9 or
+  signer of a rec-id-0 receipt); since v1.0 an empty `--require` value is
+  refused at the args layer (exit 2) — tags before v1.0 treated `--require ""`
+  as no-gate and blessed wrong-signer receipts through a blank gate. If you
+  pin the tool in CI, pin @v1.1 or
   newer (C c94: verb-adjacent form on purpose — a directive with the tag
   name between verb and version, or the version wrapped in backticks, is
   invisible to verb-adjacent directive scanners like the R5 rule).

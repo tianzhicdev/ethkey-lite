@@ -46,7 +46,7 @@ ethers.js v6 — and <strong>signed release receipts</strong> anyone can re-veri
 <strong>Gate your releases on it (one CI line, zero secrets):</strong>
 <pre style="overflow-x:auto;font-size:.85rem">jobs:
   verify:
-    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.9
+    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v1.1
     with:
       receipt: proofs/release-proof.md
       require: "0xYourWalletAddress"</pre>
