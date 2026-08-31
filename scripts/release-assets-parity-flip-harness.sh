@@ -85,7 +85,7 @@ check F5_no_repo 2 "$rc" "$out" "repo root"
 cat > "$BASE/leakrepro.py" <<'PYEOF'
 import importlib.util, os, socket, sys, threading, urllib.error, urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
-TOKEN = "SELFTEST-LEAKPROOF-7c46"
+TOKEN = "SELFTEST-LEAKPROOF-7c46"  # secretgate: allow test-only dummy, never a credential
 SEEN = {"hop1": None, "hop2": None}
 def free_port():
     s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
