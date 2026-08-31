@@ -80,6 +80,9 @@ EXPECTED = {
     # this guard's comparison always passes a literal addr (c104: the pin
     # was measured rc=0 on v0.8 + HEAD before pinning, non-vacuous).
     "v1.0-empty-require.md": 0,
+    # v1.1 artifact receipt (binds WORKFLOW bytes; tool bytes == v1.0):
+    # valid under BOTH tools, measured rc=0 on v0.8 + HEAD before pinning.
+    "v1.1-workflow-defaults.md": 0,
 }
 
 # signer identity for the receipts/fixtures that sign to the C wallet;
