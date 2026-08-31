@@ -52,15 +52,24 @@ check F3_bogus_token_fast 1 "$rc" "$out" "HTTP 401"
 # fast = under 25s: 3-attempt backoff would sleep >=3+6s + 3x30s timeouts
 [ "$dt" -lt 25 ] && { echo "PASS[F3-fast] ${dt}s"; pass=$((pass+1)); } || { echo "FAIL[F3-fast]: ${dt}s >= 25s (retried a 401?)"; fail=$((fail+1)); }
 
-# F4: host-scope boundary is a boundary not a hole at the MAIN-path level:
-# point the rail's API_ROOT at a decoy host that ECHOES the path shape —
-# cheaper equivalent: --selftest already baited substring hosts; instead
-# assert here that the asset-download host never carries auth by grepping
-# the code for the ONLY Authorization source = auth_header via headers_for.
+# F4: the credential has exactly ONE construction site, ONE attach site, and
+# (c46) ONE removal site. The attach count is what keeps headers_for() the
+# only path a token can take; the strip count pins the opener leg.
 d=$(fresh f4)
-n=$(grep -c "Authorization" "$d/scripts/release-assets-parity.py")
-authsites=$(grep -n "Authorization" "$d/scripts/release-assets-parity.py" | grep -v "selftest\|expect\|h.get\|not in h\|api host\|auth_header\|headers_for\|#\|\"\"\|leak\|LEAK\|empty" | wc -l)
-if [ "$authsites" -le 2 ]; then echo "PASS[F4-single-auth-site] ($n mentions, $authsites attach sites)"; pass=$((pass+1)); else echo "FAIL[F4-single-auth-site]: $authsites attach sites"; fail=$((fail+1)); fi
+# c46 REWRITE of this leg: the old grep-filter heuristic false-RED'd the
+# moment the strip class added honest 'Authorization' mentions (has_header/
+# remove_header) — a keyword-count with an ever-growing exclusion list is
+# rot waiting to happen. Exact-pattern counts instead: the credential is
+# CONSTRUCTED in exactly one place and ATTACHED in exactly one place; the
+# strip REMOVES in exactly one place.
+constructs=$(grep -c '"Authorization": "token "' "$d/scripts/release-assets-parity.py")
+attaches=$(grep -c 'h.update(auth_header())' "$d/scripts/release-assets-parity.py")
+strips=$(grep -c 'new.remove_header("Authorization")' "$d/scripts/release-assets-parity.py")
+if [ "$constructs" = "1" ] && [ "$attaches" = "1" ] && [ "$strips" = "1" ]; then
+  echo "PASS[F4-single-auth-site] (construct 1 / attach 1 / strip 1)"; pass=$((pass+1))
+else
+  echo "FAIL[F4-single-auth-site]: construct=$constructs attach=$attaches strip=$strips (want 1/1/1)"; fail=$((fail+1))
+fi
 
 # F5: no-repo vacuity guard — run from outside a repo root -> exit 2 names itself
 d=$(fresh f5)
