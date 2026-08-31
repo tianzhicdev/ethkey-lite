@@ -34,10 +34,13 @@ import sys
 BASELINE_TAG = "v0.8"  # bump deliberately on each release
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# fixture -> expected exit code of `verify --require <SIGNER>` under BOTH
-# the baseline-tag tool and HEAD. Valid receipts (rc 0) + deliberate forgeries
-# (rc 1). A new proofs/ fixture that is NOT in this table = FAIL (read it,
-# decide its verdict, commit it here — absence must be a deliberate edit).
+# fixture -> expected exit code of `verify --require <SIGNER>`. Either an int
+# (same verdict under BOTH tools — the normal case) or a {'old': X, 'head': Y}
+# dict for a DELIBERATE strictness change: the pair is a pinned edit, reviewed
+# like a BASELINE_TAG bump, never an accident. Valid receipts (rc 0) +
+# deliberate forgeries (rc 1). A new proofs/ fixture that is NOT in this table
+# = FAIL (read it, decide its verdict, commit it here — absence must be a
+# deliberate edit).
 EXPECTED = {
     "v0.4-source.md": 0,
     "v0.5-receipt-page.md": 0,
@@ -47,6 +50,11 @@ EXPECTED = {
     "c12-dup-field-fixture.md": 1,
     "c18-forged-signer-fixture.md": 1,
     "c18-throwaway-signed-fixture.md": 1,
+    # c63 multi-slice strictness: two concatenated receipts w/ the 2nd payload
+    # tampered. v0.8 prefix-parses (blind to receipt 2+) -> bless rc=0; HEAD
+    # verifies EVERY block -> rc=1 naming slice #2. The 0->1 flip IS the fix;
+    # it stays a pinned pair so ANY future flip in either direction goes red.
+    "c63-concat-fixture.md": {"old": 0, "head": 1},
 }
 
 # signer identity for the receipts/fixtures that sign to the C wallet;
@@ -117,22 +125,30 @@ def main():
         rc_old, out_old = run_verify(old, fx)
         rc_head, out_head = run_verify(head, fx)
         exp = EXPECTED.get(f)
-        # leg 1: both match the pinned expectation
-        if rc_old != exp:
-            fail(f"{f}: {BASELINE_TAG}-tool rc={rc_old}, expected {exp} "
+        exp_old = exp.get("old") if isinstance(exp, dict) else exp
+        exp_head = exp.get("head") if isinstance(exp, dict) else exp
+        # leg 1: both match the pinned expectation (pair = deliberate flip)
+        if rc_old != exp_old:
+            fail(f"{f}: {BASELINE_TAG}-tool rc={rc_old}, expected {exp_old} "
                  "(fixture or baseline drifted — investigate before merging)")
-        if rc_head != exp:
-            fail(f"{f}: HEAD rc={rc_head}, expected {exp} — "
-                 + ("RE-LENIENTING: HEAD accepts what the tag rejected"
+        if rc_head != exp_head:
+            fail(f"{f}: HEAD rc={rc_head}, expected {exp_head} — "
+                 + ("RE-LENIENTING: HEAD accepts what the pin demands it reject"
                     if rc_head == 0 else "regression: HEAD rejects a pinned accept"))
-        # leg 2: old == head (verdict AND accept-line identity)
-        if rc_old != rc_head:
+        # leg 2: old == head UNLESS the EXPECTED pair declares a deliberate
+        # strictness change (dict form); an undeclared flip is still RED.
+        if isinstance(exp, dict):
+            if rc_old == rc_head:
+                fail(f"{f}: pinned {exp_old}->{exp_head} deliberate flip did NOT "
+                     f"occur (both rc={rc_old}) — fixture or fix rotted")
+        elif rc_old != rc_head:
             fail(f"{f}: DIVERGENCE {BASELINE_TAG} rc={rc_old} vs HEAD rc={rc_head}")
         if rc_head == 0 and out_head != out_old:
             fail(f"{f}: both rc=0 but output differs — the pinned "
                  "'result: OK' contract text changed")
-        if rc_old == exp and rc_head == exp and rc_old == rc_head:
-            ok(f"{f}: rc={rc_head} (pinned {exp}) {BASELINE_TAG}==HEAD")
+        if rc_old == exp_old and rc_head == exp_head and (isinstance(exp, dict) or rc_old == rc_head):
+            ok(f"{f}: rc={rc_head} (pinned {exp}) {BASELINE_TAG}==HEAD" if not isinstance(exp, dict)
+               else f"{f}: deliberate pin {exp_old}->{exp_head} held ({BASELINE_TAG} rc={rc_old}, HEAD rc={rc_head})")
 
     if failures:
         print(f"same-ref guard: FAILED ({len(failures)} failures)")

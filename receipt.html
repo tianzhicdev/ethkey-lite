@@ -142,6 +142,25 @@ function parseParams(sp) {
   return out;
 }
 
+function splitProofs(md) {
+  // c63 mirror of ethkey.py split_proofs: a document may carry SEVERAL
+  // receipts; the old first-BEGIN/first-END parse made receipt #2+ invisible
+  // while still reporting 'valid' — bless-by-invisibility, measured.
+  // Slice per receipt; each slice's header fields are read only from inside
+  // its own slice. Unterminated BEGIN fails closed. Zero slices -> [].
+  const slices = [];
+  let pos = 0;
+  for (;;) {
+    const b0 = md.indexOf(PAYLOAD_BEGIN, pos);
+    if (b0 === -1) break;
+    const b1 = md.indexOf(PAYLOAD_END, b0);
+    if (b1 === -1) throw new Error('unterminated payload block (missing END marker)');
+    slices.push(md.slice(pos, b1 + PAYLOAD_END.length));
+    pos = b1 + PAYLOAD_END.length;
+  }
+  return slices;
+}
+
 function parseProof(md) {
   // Mirrors ethkey.py verify_proof: known-key whitelist before payload block,
   // field order irrelevant, unknown lines ignored (injection guard).
@@ -179,8 +198,7 @@ function canonicalString(created, sha256Hex_) {
   return PROOF_MAGIC + ' v1\ncreated:' + created + '\nsha256:' + sha256Hex_;
 }
 
-async function verifyReceipt(md, requireAddr) {
-  // Returns { checks: [{name, ok, detail}], ok } — mirrors CLI verify + --require.
+async function _verifyOne(md, requireAddr) {
   const checks = [];
   const push = (name, ok, detail) => checks.push({ name, ok: !!ok, detail });
   try {
@@ -219,6 +237,25 @@ async function verifyReceipt(md, requireAddr) {
     push('parse', false, e.message);
   }
   return { checks, ok: checks.length > 0 && checks.every(c => c.ok) };
+}
+
+async function verifyReceipt(md, requireAddr) {
+  // Returns { checks: [{name, ok, detail}], ok } — mirrors CLI verify +
+  // --require over EVERY receipt in the document (c63 multi-slice): a
+  // concatenated bundle verifies each slice standalone; ok only if ALL pass,
+  // and every slice must equal requireAddr when one is given.
+  let slices;
+  try { slices = splitProofs(md); }
+  catch (e) { return { checks: [{ name: 'parse', ok: false, detail: e.message }], ok: false }; }
+  if (slices.length <= 1) return _verifyOne(md, requireAddr);
+  const all = [];
+  for (let i = 0; i < slices.length; i++) {
+    const r = await _verifyOne(slices[i], requireAddr);
+    for (const c of r.checks) all.push({ name: c.name + '#' + (i + 1), ok: c.ok, detail: c.detail });
+    if (!r.ok) return { checks: all, ok: false };
+  }
+  all.push({ name: 'bundle', ok: true, detail: slices.length + ' receipts each verified standalone' });
+  return { checks: all, ok: true };
 }
 // ---- CORE END ----
 

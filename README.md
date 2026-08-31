@@ -63,7 +63,12 @@ python3 ethkey.py verify proofs/v0.4-source.md --require 0xf232dcdc177b53981b4d8
 Receipts are self-contained markdown (payload embedded base64 between the
 exact marker lines `-----BEGIN PAYLOAD-----` / `-----END PAYLOAD-----` — match
 those verbatim if you write a third-party parser), so they work
-as pinned artifacts in any repo. The signature covers the canonical string
+as pinned artifacts in any repo. A document may carry SEVERAL receipts
+(copy-paste handoffs, `cat proofs/*.md > bundle.md`): `verify` checks EVERY
+payload block in the file, each standalone, and a missing END marker fails
+closed — the pre-fix prefix parse saw only the first block and blessed
+tampering of any later one (pinned by the must-FAIL fixture
+[`proofs/c63-concat-fixture.md`](proofs/c63-concat-fixture.md)). The signature covers the canonical string
 `ethkey-lite-proof v1\ncreated:<t>\nsha256:<hash>` via `personal_sign`, so
 `ethers.verifyMessage()` verifies it too — no Python required.
 

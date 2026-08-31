@@ -241,6 +241,29 @@ def selftest() -> bool:
     bad = md.replace(PAYLOAD_BEGIN + '\n', PAYLOAD_BEGIN + '\nZQ==\n')
     ok2, _, _ = verify_proof(bad)
     assert not ok2, 'tampered proof must not verify'
+    # c63 multi-receipt: EVERY receipt in a document is verified, not just
+    # the first (the pre-fix prefix parse blessed a tampered 2nd receipt —
+    # measured repro in work/c63-concat-blindness/, fleet bless-by-invisibility
+    # family). Each sub-assert below is one leg of the new contract.
+    md2 = make_proof(b'second payload', pk3, note='selftest 2')
+    multi = md + '\n' + md2
+    okm, signerm, _ = verify_proof(multi)
+    assert okm and signerm == addr3 + '+' + addr3, f'multi verify wrong: {okm} {signerm}'
+    bad2 = md2.replace(PAYLOAD_BEGIN + '\n', PAYLOAD_BEGIN + '\nZQ==\n')
+    okb, _, reasonb = verify_proof(md + '\n' + bad2)
+    assert not okb and '#2/2' in reasonb, f'tampered 2nd must FAIL naming slice: {okb} {reasonb}'
+    # mixed signers + require: good-1 (pk3) + good-2 signed by pk (addr1) must
+    # not ride the first signer through a --require gate
+    md_mixed = md + '\n' + make_proof(b'other signer payload', pk, note='selftest mix')
+    okx, _, reasonx = verify_proof(md_mixed, require=addr3)
+    assert not okx and 'is not required' in reasonx, f'mixed-signer require must FAIL: {okx} {reasonx}'
+    okx2, _, _ = verify_proof(md + '\n' + md2, require=addr3)
+    assert okx2, 'all-slices-match require must pass'
+    # truncated bundle fails CLOSED (prefix must not verify)
+    trunc = (md + '\n' + md2).split('-----END PAYLOAD-----')[0] + md2.split('-----END PAYLOAD-----')[0]
+    okt, _, reasont = verify_proof(trunc)
+    assert not okt and 'unterminated' in reasont, f'truncated bundle must fail closed: {okt} {reasont}'
+    assert len(split_proofs(multi)) == 2 and len(split_proofs(md)) == 1
     return True
 
 
@@ -281,8 +304,38 @@ def make_proof(payload: bytes, priv_int: int, note: str = '') -> str:
     return '\n'.join(lines) + '\n'
 
 
-def verify_proof(md: str):
-    """Return (ok, signer_address_or_None, reason)."""
+def split_proofs(md: str):
+    """Split a document into one slice per receipt (c63).
+
+    A document may carry SEVERAL receipts (bundles: copy-paste handoffs,
+    `cat proofs/*.md > bundle.md`). Prefix parsing (first BEGIN/END only)
+    made every receipt after the first INVISIBLE while the tool still
+    printed 'signature valid, payload intact' about the whole file —
+    bless-by-invisibility, measured in c63: a tampered receipt alone =
+    FAIL, the same tamper concatenated after a good receipt = bless.
+    Each slice spans from the end of the previous slice to its OWN END
+    marker, so a receipt's header fields are only ever read from inside
+    its own slice (unknown/other-receipt lines never join the whitelist
+    walk). Zero slices -> [] (caller reports malformed)."""
+    slices = []
+    pos = 0
+    while True:
+        begin = md.find(PAYLOAD_BEGIN, pos)
+        if begin == -1:
+            break
+        end = md.find(PAYLOAD_END, begin)
+        if end == -1:
+            # truncated bundle: a BEGIN with no END after it. Fail closed —
+            # silently verifying only the complete prefix would re-open the
+            # exact bless-by-invisibility this function exists to close.
+            raise ValueError('unterminated payload block (missing END marker)')
+        slices.append(md[pos:end + len(PAYLOAD_END)])
+        pos = end + len(PAYLOAD_END)
+    return slices
+
+
+def _verify_one(md: str):
+    """Single-receipt verify. Return (ok, signer_address_or_None, reason)."""
     try:
         fields = {}
         for line in md.splitlines():
@@ -307,6 +360,39 @@ def verify_proof(md: str):
         return True, signer, 'signature valid, payload intact'
     except Exception as e:
         return False, None, f'malformed proof: {e}'
+
+
+def verify_proof(md: str, require=None):
+    """Verify EVERY receipt in a document. Return (ok, signers, reason).
+
+    c63: the old single-slice parse blessed concatenated bundles while
+    blind to receipt #2+ (a tampered second receipt read OK). Now each
+    slice from split_proofs() verifies standalone; `ok` only if ALL pass.
+    Single-receipt docs keep the EXACT old (ok, signer, reason) contract;
+    multi-receipt docs join signers with '+' and name the first failing
+    slice with its index. `require` (optional addr) asserts EVERY slice's
+    recovered signer — a good first receipt can no longer carry a
+    wrong-signered second one through a --require gate."""
+    try:
+        slices = split_proofs(md)
+    except ValueError as e:
+        return False, None, f'malformed proof: {e}'
+    if not slices:
+        return _verify_one(md)
+    if len(slices) == 1 and not require:
+        return _verify_one(slices[0])
+    results = [_verify_one(s) for s in slices]
+    signers = '+'.join(r[1] for r in results if r[1])
+    for i, (ok_i, signer_i, reason_i) in enumerate(results, 1):
+        if not ok_i:
+            tag = f'receipt #{i}/{len(slices)}' if len(slices) > 1 else ''
+            return False, signers or None, (f'{tag}: {reason_i}' if tag else reason_i)
+        if require and (not signer_i or signer_i.lower() != require.lower()):
+            return False, signers or None, (
+                f'receipt #{i}/{len(slices)}: signer {signer_i} is not required {require}')
+    reason = (f'{len(slices)} receipts valid, payloads intact'
+              if len(slices) > 1 else 'signature valid, payload intact')
+    return True, (signers or None), reason
 
 
 # ---------- CLI ----------
@@ -412,11 +498,11 @@ def main(argv):
             return 1
         try:
             with open(rest[0]) as f:
-                ok, signer, reason = verify_proof(f.read())
+                ok, signer, reason = verify_proof(f.read(), require=require)
         except OSError as e:
             print(f'error: {e}', file=sys.stderr)
             return 1
-        if signer and require and signer.lower() != require.lower():
+        if signer and require and '+' not in signer and signer.lower() != require.lower():
             ok, reason = False, f'signer {signer} is not required {require}'
         print('signer:', signer)
         print('result:', 'OK' if ok else 'FAIL', '-', reason)
