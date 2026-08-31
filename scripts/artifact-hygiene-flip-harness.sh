@@ -19,7 +19,12 @@
 #   F9 blocklist += a name with NO ignore line = catch-without-prevent RED
 #   (B c44 offer, c49; mutation pre-flighted as UNCOVERED per B's weak-
 #   mutation lesson: scan.out was eaten by their own *.out line) / F9t the
-#   must-GREEN twin: same name + ignore line = 7/7 parity prints / F9b the
+#   must-GREEN twin: same name + ignore line = 7/7 parity prints AND the
+#   printed covered set NAMES the new member (A c57 delta 1: set-
+#   membership, not count-only) / F9s the count-LIER mutant: probe loop
+#   loses a member, printed count stays claimed — old count-only F9t
+#   blessed it rc=0; the printed-set vs denominator cross-check kills it /
+#   F9b the
 #   derived half: a NEW checkout `path: .newclone` step (no ignore line)
 #   REDs through the probe-CHILD shape '.newclone/probe' (dir-only rules
 #   never match the bare dir) / F10 fail-closed: PATH-shadowed git exiting
@@ -176,6 +181,10 @@ echo "OK[F9]: catch-without-prevent RED, names the uncovered name"
 
 # F9t — must-GREEN twin: same blocklist add WITH the ignore line -> parity
 # prints 7/7 GREEN (the exclusion needs its proven-green twin, c38 rule).
+# A c57 delta 1 upgrade: the GREEN assert is now SET-MEMBERSHIP on the
+# printed covered set, not just the count move — a count-only assert is
+# false-GREEN'd by any mutant that keeps the denominator honest while the
+# probe loop loses a member (see F9s, measured).
 D=$(fresh_copy f9t); cd "$D"
 python3 - <<'PYEOF'
 import re
@@ -189,7 +198,54 @@ echo "c49-exfil.dat" >> .gitignore
 out=$(run_rail .); code=$?
 [ $code -eq 0 ] || { echo "FAIL[F9t]: exit $code, expected 0"; echo "$out"; fails=1; }
 echo "$out" | grep -q 'catch-vs-prevent parity: 7/7' || { echo "FAIL[F9t]: parity line does not print 7/7"; echo "$out"; fails=1; }
-echo "OK[F9t]: name + ignore line = GREEN, parity count moves 6/6 -> 7/7"
+echo "$out" | grep -E 'catch-vs-prevent parity' | grep -q '\[.*c49-exfil\.dat' || { echo "FAIL[F9t]: printed covered set does not NAME the new member (count-move without membership = A c57 count-only class)"; echo "$out"; fails=1; }
+echo "OK[F9t]: name + ignore line = GREEN; count moves 6/6 -> 7/7 AND the printed set contains the new name"
+
+# F9s — the count-LIER mutant (A c57 delta 1, measured before code): the
+# rail drops one probe from the loop but prints the CLAIMED count — the old
+# F9t (grep '7/7') blessed exactly this: rc=0, 'parity: 7/7', zero text
+# naming the swallowed member. With the printed covered set the harness can
+# cross-check denominator vs membership: count says 7, set lists 6, and the
+# dropped name is absent -> RED by harness assertion on honest-rail output.
+D=$(fresh_copy f9s); cd "$D"
+python3 - <<'PYEOF'
+src = open("scripts/artifact-hygiene.py").read()
+# 1) same blocklist add as F9t (else nothing is swallowed = vacuous mutant,
+#    my own first-draft self-catch: filter found no member to drop, rail
+#    honestly printed 6/6 and the 'count-lier' had nothing to lie about)
+src = src.replace("    \"vermin.log\",         # py39-floor vermin stdout\n",
+                  "    \"vermin.log\",         # py39-floor vermin stdout\n    \"c49-exfil.dat\",      # mutant name, swallowed by count-lier\n", 1)
+assert "c49-exfil.dat" in src, "blocklist add did not land"
+old = '    probes = sorted(BLOCKLIST) + sorted(p + "probe" for p in prefixes)\n'
+assert old in src, "probes anchor missing"
+# filter at the SAME indent, right after claimed: mutant computes the
+# honest denominator, then drops a member from the loop it prints it with.
+src2 = src.replace(old, old
+    + '    claimed = len(probes)\n'
+    + '    probes = [n for n in probes if n != "c49-exfil.dat"]\n', 1)
+assert src2 != src
+old3 = 'print(f"OK: catch-vs-prevent parity: {len(probes)}/{len(probes)} "'
+assert old3 in src2, "OK-line anchor missing"
+src3 = src2.replace(old3, 'print(f"OK: catch-vs-prevent parity: {claimed}/{claimed} "', 1)
+assert src3 != src2
+open("scripts/artifact-hygiene.py", "w").write(src3)
+PYEOF
+echo "c49-exfil.dat" >> .gitignore
+out=$(run_rail . 2>&1); code=$?
+# PRE-FLIGHT (B weak-mutation rule, and my own F9s-v1 self-catch: the first
+# mutant died IndentationError rc=1 = a dead mutant 'killed' vacuously):
+# the count-lier must be GENUINELY benign — exit 0, prints 'parity: 7/7',
+# and never names the swallowed member.
+[ $code -eq 0 ] || { echo "FAIL[F9s]: pre-flight — mutant rc=$code not 0 (dead mutant = vacuous kill)"; echo "$out"; fails=1; }
+echo "$out" | grep -q 'catch-vs-prevent parity: 7/7' || { echo "FAIL[F9s]: pre-flight — mutant does not claim 7/7"; echo "$out"; fails=1; }
+echo "$out" | grep -q 'c49-exfil\.dat' && { echo "FAIL[F9s]: pre-flight — mutant still prints the swallowed name (nothing hidden = nothing to catch)"; fails=1; }
+# The HARNESS verdict: denominator (7) vs printed member count (6).
+claimed=$(echo "$out" | grep -E 'catch-vs-prevent parity' | sed -E 's/.*parity: ([0-9]+)\/.*/\1/')
+printed=$(echo "$out" | grep -E 'catch-vs-prevent parity' | sed -E 's/.*\[(.*)\]/\1/' | tr ',' '\n' | grep -c '[^[:space:]]')
+[ "$claimed" = "$printed" ] || { echo "OK[F9s]: count-lier RED — claimed $claimed, printed set lists $printed members (old count-only F9t blessed this rc=0)"; }
+[ "$claimed" = "$printed" ] && { echo "FAIL[F9s]: count-lier survived — claimed==printed, membership delta not exposed"; echo "$out"; fails=1; }
+echo "$out" | grep -E 'catch-vs-prevent parity' | grep -q 'c49-exfil\.dat' && { echo "FAIL[F9s]: swallowed name still printed"; fails=1; }
+echo "OK[F9s] end: mutant rc=$code (GREEN by design), harness kills it on count-vs-set"
 
 # F9b — derived half of leg E: a NEW checkout `path: .newclone` step with no
 # ignore line. The probe is the CHILD path '.newclone/probe' (measured: a
@@ -222,4 +278,4 @@ echo "$out" | grep -q "check-ignore on .* errored rc=3" || { echo "FAIL[F10]: cr
 echo "OK[F10]: crashing check-ignore authority exits 2 WITH A NAME"
 
 cd /; rm -rf /tmp/c40-flips /tmp/c49-flips
-[ $fails -eq 0 ] && echo "FLIPS: 14/14 OK" || { echo "FLIPS: FAILURES"; exit 1; }
+[ $fails -eq 0 ] && echo "FLIPS: 15/15 OK" || { echo "FLIPS: FAILURES"; exit 1; }

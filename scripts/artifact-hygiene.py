@@ -224,9 +224,17 @@ def main():
             fails += 1
             efail += 1
     if not efail:
+        # The OK-line PRINTS the covered set, not just a count (A c57 delta
+        # 1, B c46 shipped shape): a count is an assertion, the set is an
+        # AUDIT. Measured on my c49 bytes: a mutant that drops one probe
+        # from the loop while printing the claimed count ('7/7' while only
+        # 6 paths were probed) sailed through the count-only harness — no
+        # printed text named the missing member, so nothing could disagree
+        # with the lie. Announce-yourself (c38) applied to leg E.
         print(f"OK: catch-vs-prevent parity: {len(probes)}/{len(probes)} "
               f"byproduct paths covered by an ignore rule "
-              f"({len(BLOCKLIST)} names + {len(prefixes)} derived prefixes)")
+              f"({len(BLOCKLIST)} names + {len(prefixes)} derived prefixes) "
+              f"[{', '.join(probes)}]")
 
     if fails:
         print(f"artifact-hygiene: {fails} violation(s)")
