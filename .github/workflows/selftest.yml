@@ -542,6 +542,18 @@ jobs:
           # deliberate edit, never drift). Exit code is the verdict.
           python3 scripts/same-ref-guard.py
 
+      - name: Tip-address parity contract (B c29 shape, A c42 port, c38)
+        run: |
+          set -euo pipefail
+          # RECEIVE-side half mirrored from A's c42 port: footer/FUNDING/
+          # team-footer/FLEET-anchor must all agree on the one tip addr,
+          # live footer == committed, sibling fleet addrs REJECTED outside
+          # verify-side require= links. Here the anchor leg reads the
+          # receipt.html FLEET table — on this repo the tip IS the fleet
+          # signer, so anchor==tip is machine-pinned. Flip harness ships
+          # next to it (8 flips + control, exit-code asserts).
+          python3 scripts/tip-parity.py
+
       - name: CLI argument validation (no tracebacks, documented exit codes)
         run: |
           set -euo pipefail
