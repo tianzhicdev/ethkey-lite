@@ -746,6 +746,25 @@ jobs:
           # negative 2: nonexistent receipt -> still fails CLOSED (no crash-open,
           # the grep on 'result: OK' can only pass on a real verification)
           run_case no-such-receipt.md "$C_ADDR" 1 'missing receipt fails closed'
+          # c40 hygiene companion: the extraction above RE-CREATES
+          # composite-run.sh in the worktree (untracked now, gitignored) —
+          # assert it never re-enters git from inside CI either.
+          git ls-files --error-unmatch composite-run.sh step.log >/dev/null 2>&1 \
+            && { echo 'FAIL: CI byproduct re-added to index mid-run'; exit 1; } \
+            || echo 'OK: extraction byproducts stayed untracked'
+
+      - name: Artifact hygiene (no CI byproducts tracked, c40)
+        run: |
+          set -euo pipefail
+          # c25 accident class, pinned: `composite-run.sh` (extracted from
+          # action.yml) and `step.log` (the composite's verifier stdout, incl.
+          # one throwaway negative-control error line) were committed by a
+          # LOCAL test run of the extraction step and lived in git for 15
+          # commits, served PUBLICLY by the legacy Pages build. Nothing
+          # referenced them. Rail (pure stdlib + git): generated-file
+          # blocklist, *.log/*.out sweep, tracked-.md-outside-proofs/
+          # denominator. Pre-fix repro: RED 3 violations on the parent tree.
+          python3 scripts/artifact-hygiene.py
 
       - name: receipt.html core logic tests (browser verifier vs CLI semantics)
         run: |
