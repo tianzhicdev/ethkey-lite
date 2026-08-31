@@ -100,8 +100,10 @@ def walk_yaml(path):
 
 
 def collect_uses(path):
-    """Return list of (label, uses_value) from the jobs: subtree + top-level
-    runs: (composite action.yml)."""
+    """Return (uses_list, job_cov): uses_list is [(label, uses_value)] from the
+    jobs: subtree + top-level runs: (composite action.yml); job_cov is
+    [(job_name, has_steps_block, has_job_level_uses)] for the generic
+    job-coverage vacuity rail in main()."""
     lines = walk_yaml(path)
     out = []
     # find the indent of 'jobs:' (top level) and 'runs:' for composites
@@ -124,6 +126,7 @@ def collect_uses(path):
         return sub
 
     labels = []
+    job_cov = []   # (job_name, has_steps, has_job_uses) — coverage vacuity rail
     jobs = subtree_lines("jobs")
     if jobs:
         depth2 = min(x for (x, _k, _v) in jobs)          # job-name indent
@@ -131,11 +134,17 @@ def collect_uses(path):
         in_steps = False
         steps_indent = None
         step_item = None    # (indent_of_dash, name) of current '- ' list item
+        cov = None
         for (i, k, v) in jobs:
             if i == depth2:                              # new job starts
+                if cov is not None:
+                    job_cov.append(cov)
                 job_name, in_steps, steps_indent, step_item = k, False, None, None
+                cov = [job_name, False, False]
             if k == "steps":
                 in_steps, steps_indent = True, i
+                if cov is not None:
+                    cov[1] = True
                 continue
             if in_steps and steps_indent is not None and i <= steps_indent:
                 in_steps, step_item = False, None        # left the steps block
@@ -158,6 +167,10 @@ def collect_uses(path):
                 labels.append((f"{job_name}: {nm or 'step'}", v))
             elif k == "uses" and not in_steps:
                 labels.append((f"job {job_name}", v))
+                if cov is not None:
+                    cov[2] = True
+        if cov is not None:
+            job_cov.append(cov)
     else:
         # composite action.yml: runs: -> steps: -> list items
         runs = subtree_lines("runs")
@@ -180,7 +193,22 @@ def collect_uses(path):
                 labels.append((f"composite: {nm or 'step'}", v))
     for label, v in labels:
         out.append((label, v.strip("'")))
-    return out
+    return out, job_cov
+
+
+def visible_uses(path):
+    """Every `uses:` VALUE the comment-stripping, block-scalar-skipping walk
+    can SEE at all (any indent, any context). collect_uses() deliberately
+    collects only the ones in a steps:/runs:/job shape; the DELTA between
+    what's visible and what's collected is the walker-hole tripwire: a raw
+    `uses:` line GitHub's own parser could see as a step but my walker
+    silently drops (the c32 'strict > missed a real step' class) becomes a
+    permanent RED instead of a development-time discovery."""
+    vals = []
+    for (_i, k, v) in walk_yaml(path):
+        if k in ("uses", "-uses") and v.strip("'\""):
+            vals.append(v.strip("'\""))
+    return vals
 
 
 def allowed(value):
@@ -270,10 +298,26 @@ def main() -> int:
               file=sys.stderr)
         return 1
     collected = []
+    coverage = []   # (path, job_name, has_steps, has_job_uses)
     secrets_pin_env = set()
+    holes = []
+    bad = 0
     for path in sorted(targets):
-        uses = collect_uses(path)
+        uses, job_cov = collect_uses(path)
         collected += [(path, label, v) for (label, v) in uses]
+        coverage += [(path, j, s, u) for (j, s, u) in job_cov]
+        # walker-hole tripwire: visible-but-not-collected uses: values.
+        # c32 lesson generalized — my walker silently DROPPED a real step
+        # once (strict '>' vs the '- name:'-then-sibling-'uses:' shape);
+        # it was caught by a one-time dev-time diff against PyYAML. This
+        # leg makes that diff permanent and live on every push.
+        seen = visible_uses(path)
+        got = [v for (_l, v) in uses]
+        leftover = list(seen)
+        for v in got:
+            if v in leftover:
+                leftover.remove(v)
+        holes += [(path, v) for v in leftover]
         if os.path.basename(path) == "secrets.yml":
             for (_i, k, v) in walk_yaml(path):
                 if k == "PIN_ACTION_REF":
@@ -283,10 +327,33 @@ def main() -> int:
               "vacuous green tripwire is worse than none; failing.",
               file=sys.stderr)
         return 1
-    # cross-check vs grep: any raw 'uses:' line with a value that the walk
-    # never collected = walker bug (or prose in a file we should trust less);
-    # prose is allowed to differ ONLY inside comments — count non-comment hits.
-    bad = 0
+    # walker-hole report (see tripwire comment above): anything the walk can
+    # SEE as a `uses:` value but collect_uses couldn't map to a step is RED —
+    # either a walker hole (the c32 class) or an exotic `uses:`-named input
+    # that deserves a human look. Fail closed; never silently drop coverage.
+    for path, v in holes:
+        print(f"::error::{os.path.relpath(path, root)}: uses value "
+              f"{v!r} is VISIBLE to the walk but was not collected as a step "
+              "— walker hole or unmapped shape; inspect, do not ignore.",
+              file=sys.stderr)
+        bad = 1
+    # generic job-coverage vacuity: EVERY job the walker found under jobs:
+    # must own either a steps: block or a job-level uses: (reusable call).
+    # A job that parses to neither = the walker lost its body (renamed key,
+    # indentation surgery) — the exact silent-skip class the c32 rewrite
+    # caused on its first push. The zero-steps rail only fires when NOTHING
+    # is collected; this fires per-job even when other jobs keep it green.
+    for (path, j, has_steps, has_uses) in coverage:
+        if not (has_steps or has_uses):
+            print(f"::error::{os.path.relpath(path, root)}: job '{j}' parsed "
+                  "with NO steps: block and NO job-level uses: — either it "
+                  "genuinely has no work (delete it) or the walker lost its "
+                  "body; failing closed.", file=sys.stderr)
+            bad = 1
+    # (the per-ref verdict loop; the visible-vs-collected hole tripwire above
+    # is the implemented form of the old aspirational 'cross-check vs grep'
+    # comment — c35: a comment claiming a rail that was never coded is the
+    # c21 'documented but never executed' class, now executed for real.)
     for path, label, value in collected:
         if allowed(value):
             short = value if len(value) < 60 else value[:52] + ".."
