@@ -532,6 +532,32 @@ jobs:
           [ "$code" -eq 1 ] || { echo "FAIL: missing file exited $code, expected 1"; exit 1; }
           case "$ERR" in *Traceback*) echo "FAIL: missing file printed a traceback"; exit 1;; esac
           echo "OK: missing file -> exit 1, no traceback"
+          # c107 write-layer empty-value cells (A c109 class generalized to my
+          # own tool: --out '' silently fell back to stdout, --out '   ' wrote
+          # a file literally named '   '). Empty now refuses exit 2 at the
+          # args layer. Scope cells: --note '' stays LEGAL, flag-absent --out
+          # stays the documented stdout path.
+          ETHKEY_PK=$(printf '%064d' 1)
+          export ETHKEY_PK
+          for a in "proof hello --out ''" "proof hello --out '   '" "proof --file '' --out c107-probe.md"; do
+            set +e
+            ERR=$(eval "python3 ethkey.py $a" 2>&1 >/dev/null); code=$?
+            set -e
+            [ "$code" -eq 2 ] || { echo "FAIL: empty-value '$a' exited $code, expected 2"; exit 1; }
+            case "$ERR" in *Traceback*) echo "FAIL: '$a' printed a traceback"; exit 1;; esac
+            case "$ERR" in *empty*) echo "FAIL-MSG ok";; *) echo "FAIL: '$a' message does not name empty: $ERR"; exit 1;; esac
+            echo "OK: empty-value '$a' -> exit 2 naming empty, no traceback"
+          done
+          if [ -e '   ' ]; then echo "FAIL: a file named '   ' exists"; exit 1; fi
+          if [ -e c107-probe.md ]; then echo "FAIL: --file '' wrote anything"; exit 1; fi
+          # scope cells: empty --note and flag-absent --out stay legal
+          set +e
+          python3 ethkey.py proof hello --out '' >/dev/null 2>&1; rc=$?
+          set -e
+          [ "$rc" -eq 2 ] || { echo "FAIL: --out '' not refused (rc=$rc)"; exit 1; }
+          python3 ethkey.py proof hello --note '' >/dev/null || { echo "FAIL: empty --note refused (must stay legal)"; exit 1; }
+          python3 ethkey.py proof hello >/dev/null || { echo "FAIL: flag-absent --out broke stdout path"; exit 1; }
+          echo "OK: c107 empty-value refuses + scope cells (note/absent-out legal)"
           # c30 gap #5: README documents exit 2 for a MALFORMED signature /
           # invalid recovery id / out-of-range r,s — the mutation probe only
           # compares old-vs-new rc SHAPE, never asserts the current tool's

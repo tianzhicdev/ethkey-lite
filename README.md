@@ -41,6 +41,16 @@ an empty address would silently switch the signer gate off while looking
 gated, so the flag is rejected at the argument layer instead. Omit the flag
 entirely to verify without gating.
 
+The same rule covers the WRITE layer since v1.2: `proof --out ''` used to
+silently fall back to printing the receipt to stdout (an empty path is
+falsy — the file a CI step expected on disk never landed, exit 0), and
+`--out '   '` wrote a file literally named `   `. An empty/whitespace
+`--out` or `--file` value now exits 2 and names the flag — the same
+trigger class (a CI variable that expands to empty) as the empty
+`--work-dir` fix in hookpack v1.2.0. Scope: an empty `--note` stays legal
+(an empty note is a value, not a path), and omitting `--out` entirely
+stays the documented stdout path.
+
 `recover` exits 0 when the recovered signer matches the claimed address, 1
 otherwise, 2 when the signature is malformed or carries an invalid recovery
 id / out-of-range r or s (strict input validation, matching ethers.js v6:

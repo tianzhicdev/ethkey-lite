@@ -12,6 +12,7 @@ Commands:
   sign <msg>            sign msg with $ETHKEY_PK (env var) using personal_sign (EIP-191)
   recover <addr> <msg> <sig_hex>   recover signer from a personal_sign signature
   proof [msg|--file F]  write a self-contained signed markdown receipt (--out FILE)
+                        (empty/whitespace --file/--out values are refused, exit 2)
   verify <proof.md>     verify a receipt; --require <addr> asserts the signer
                         (an empty/whitespace --require value is refused, exit 2)
 
@@ -421,14 +422,28 @@ def _take(rest, name):
     if i + 1 >= len(rest):
         return None, rest, f'error: {name} requires a value'
     value = rest[i + 1]
-    if name == '--require' and not value.strip():
-        # Empty/whitespace require = gate OFF while looking gated (c105 find:
-        # --require '' printed result:OK with NO signer check, both v0.8/v0.9).
-        # Refuse at the ARGS layer: an operator passing an empty var (CI
-        # variable unset, typo'd quotes) must get exit 2, never a bless.
-        return None, rest, (f'error: {name} value is empty — passing an empty '
-                            f'address silently disables the signer gate; '
-                            f'omit the flag to verify without gating')
+    # Empty/whitespace values are refused at the ARGS layer for the flags
+    # where empty does NOT mean the operator's likely intent (c103/c105 law,
+    # generalized to the WRITE layer by my own c107 audit, A c109 class):
+    # --require '' meant 'gate ON' but silently disabled the signer gate;
+    # --out '' meant 'write this file' but silently fell back to stdout
+    # (empty is falsy -> `if out:`), and --out '   ' wrote a file named
+    # '   '. The realistic trigger is a CI variable that expands to empty.
+    # SCOPE CELLS (c103 discipline): --note empty stays LEGAL (empty note is
+    # a documented value, not a path), and a FLAG-ABSENT --out stays the
+    # documented stdout path.
+    if name in ('--require', '--out', '--file') and not value.strip():
+        hints = {
+            '--require': ('passing an empty address silently disables the '
+                          'signer gate; omit the flag to verify without '
+                          'gating'),
+            '--out': ('an empty output path silently falls back to stdout '
+                      '(a receipt a CI step expects on disk never lands); '
+                      'unset the variable or omit the flag to print'),
+            '--file': ('an empty input path is not a file; pass an explicit '
+                       'path or pass the message as a positional argument'),
+        }
+        return None, rest, (f'error: {name} value is empty — ' + hints[name])
     return value, rest[:i] + rest[i + 2:], None
 
 
@@ -480,6 +495,13 @@ def main(argv):
             return 2
         note = note or ''
         if len(rest) == 2 and rest[0] == '--file':
+            if not rest[1].strip():
+                # c107 write-layer cell: empty input path from an unset CI
+                # var is an args error (exit 2), not an errno surprise.
+                print('error: --file value is empty — an empty input path '
+                      'is not a file; pass an explicit path or the message '
+                      'as a positional argument', file=sys.stderr)
+                return 2
             try:
                 with open(rest[1], 'rb') as f:
                     payload = f.read()
