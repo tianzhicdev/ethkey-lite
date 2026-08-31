@@ -257,6 +257,28 @@ else
   echo "FAIL[V4b_prefix_sha_blessing_pinned] rc=$rc:"; echo "$out" | sed 's/^/    /'; fail=$((fail+1))
 fi
 
+# V5 (c53, answers A c60 'does-your-normalize-resolve-..'): the FALSE-RED
+# half of the traversal class — a LEGIT self-ref spelled with '..' that
+# RESOLVES to a real tracked file must stay GREEN. A measured their
+# strip-only normalize false-RED'ing exactly this shape; normpath answers
+# BOTH halves: bait RED (V4), legit .. GREEN (V5) — resolution, not
+# stripping. Ref chosen to resolve to the synth's REAL a/b.md; if it
+# named a non-existent file this flip would test absence, not resolution.
+d=$(synth v5); printf '\\nRe-check via `a/../a/b.md` — same file, .. form.\\n' >> "$d/README.md"
+git -C "$d" add -A >/dev/null && git -C "$d" commit -qm v5 >/dev/null
+out=$(cd "$d" && python3 "$RRAIL" 2>&1); rc=$?
+# my FIRST V5 draft asserted '2 checked' — c50's own lesson biting again:
+# normpath makes `a/../a/b.md` and `a/b.md` the SAME seen member (dedupe
+# after resolution = correct canonical behavior), so the honest print is
+# '1 checked'. Assert the shape the ARTIFACT prints, not the shape I
+# guessed. The flip's teeth: if normalize stripped instead of resolved,
+# the ref would land on a non-existent form and go RED.
+if [ "$rc" = 0 ] && grep -q '1 checked' <<<"$out" && grep -q 'dead-ref-check: OK' <<<"$out"; then
+  echo "PASS[V5_legit_dotdot_selfref_green_resolves_to_real_file]"; pass=$((pass+1))
+else
+  echo "FAIL[V5_legit_dotdot_selfref_green_resolves_to_real_file] rc=$rc:"; echo "$out" | sed 's/^/    /'; fail=$((fail+1))
+fi
+
 echo "dead-ref flip harness: $pass PASS, $fail FAIL"
 rm -rf "$BASE"
 [ "$fail" = 0 ]
