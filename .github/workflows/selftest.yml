@@ -719,9 +719,11 @@ jobs:
           # gitignore never untracks, so the config lies). Fenced README
           # blocks are EXCLUDED by design (consumer copy-paste snippets name
           # paths in the reader's repo); unterminated fences fail-closed exit
-          # 2 rather than guess scope. Flips 7/7 (fresh clone per flip,
+          # 2 rather than guess scope. Flips 10 checks (fresh clone per flip,
           # mutation-landed asserts, incl F3 gitignore-vs-index + F4 fail-
-          # closed + F5/F6 green-non-vacuity scope proofs).
+          # closed + F5/F6 green-non-vacuity scope proofs + F7 printed-
+          # exemption-count-Names-mutation leg, c45: a .git/ carve-out that
+          # skips silently, or exempts everything, is RED not luck).
           python3 scripts/dead-ref-check.py
 
       - name: receipt.html core logic tests (browser verifier vs CLI semantics)
