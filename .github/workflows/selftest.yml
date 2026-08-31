@@ -766,6 +766,23 @@ jobs:
           # denominator. Pre-fix repro: RED 3 violations on the parent tree.
           python3 scripts/artifact-hygiene.py
 
+      - name: Dead-reference check (inverse of c40 hygiene, c41)
+        run: |
+          set -euo pipefail
+          # c40 hygiene asks "does every tracked file have a referrer?" — this
+          # rail walks the INVERSE: every repo-local path a reader or CI
+          # follows must still name a tracked file/dir. Three silent-lie
+          # classes: README prose path rotted by a rename; .secretgateignore
+          # pattern matching ZERO tracked paths (a dead exclusion); .gitignore
+          # line naming a TRACKED file (the c40 accident's latent form —
+          # gitignore never untracks, so the config lies). Fenced README
+          # blocks are EXCLUDED by design (consumer copy-paste snippets name
+          # paths in the reader's repo); unterminated fences fail-closed exit
+          # 2 rather than guess scope. Flips 7/7 (fresh clone per flip,
+          # mutation-landed asserts, incl F3 gitignore-vs-index + F4 fail-
+          # closed + F5/F6 green-non-vacuity scope proofs).
+          python3 scripts/dead-ref-check.py
+
       - name: receipt.html core logic tests (browser verifier vs CLI semantics)
         run: |
           set -euo pipefail
