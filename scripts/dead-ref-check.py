@@ -91,7 +91,14 @@ def ok(msg):
 
 
 def tracked_files():
-    r = subprocess.run(["git", "ls-files"], capture_output=True, text=True)
+    # timeout: a wedged git child (credential/tunnel prompt) hangs the whole
+    # check with NO rc (c113 hang-door, A c117 class; measured: stub-sleeping
+    # git = SIGALRM at +6s, no rc). Local git ls is ms-scale; 60s >> real.
+    try:
+        r = subprocess.run(["git", "ls-files"], capture_output=True,
+                           text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        die("git ls-files timed out after 60s (wedged git child?)", 2)
     if r.returncode != 0:
         die("git ls-files failed: " + r.stderr.strip(), 2)
     files = r.stdout.split()

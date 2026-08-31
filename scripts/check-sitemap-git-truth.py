@@ -78,10 +78,14 @@ def main():
             datetime.date.fromisoformat(lastmod)
         except ValueError:
             die(f"<lastmod> '{lastmod}' for {page} is not an ISO date")
-        git = subprocess.run(
-            ["git", "log", "-1", "--format=%cd", "--date=short", "--", page],
-            cwd=root, capture_output=True, text=True,
-        )
+        try:  # hang-door guard (c113): wedged git child would freeze the check
+            git = subprocess.run(
+                ["git", "log", "-1", "--format=%cd", "--date=short", "--", page],
+                cwd=root, capture_output=True, text=True, timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"FAIL: git log timed out after 60s for {page}")
+            sys.exit(2)
         if git.returncode != 0:
             die(f"git log failed for {page}: {git.stderr.strip()}")
         truth = git.stdout.strip()

@@ -109,8 +109,13 @@ def ok(msg):
 def fetch_baseline(out_path):
     """Materialize ethkey.py @ BASELINE_TAG via git (CI has full history).
     Fail-closed: no route, no green."""
-    p = subprocess.run(["git", "show", f"{BASELINE_TAG}:ethkey.py"],
-                       cwd=ROOT, capture_output=True, text=True)
+    try:  # hang-door guard (c113): wedged git child would freeze the guard
+        p = subprocess.run(["git", "show", f"{BASELINE_TAG}:ethkey.py"],
+                           cwd=ROOT, capture_output=True, text=True,
+                           timeout=60)
+    except subprocess.TimeoutExpired:
+        fail(f"git show timed out after 60s (wedged git child?)")
+        return None
     if p.returncode != 0 or "def verify_proof" not in p.stdout:
         fail(f"cannot materialize ethkey.py@{BASELINE_TAG} via git show "
              f"(rc={p.returncode}); refusing a vacuous guard")
@@ -121,9 +126,15 @@ def fetch_baseline(out_path):
 
 
 def run_verify(tool_path, fixture_path):
-    p = subprocess.run([sys.executable, tool_path, "verify", fixture_path,
-                        "--require", SIGNER],
-                       capture_output=True, text=True)
+    # 120s: this child is the TOOL itself — a tool-side hang (c111 class)
+    # must surface as a loud guard failure, not a frozen CI job.
+    try:
+        p = subprocess.run([sys.executable, tool_path, "verify", fixture_path,
+                            "--require", SIGNER],
+                           capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        fail(f"tool verify child timed out after 120s (tool hang?)")
+        return 2, ""
     return p.returncode, p.stdout
 
 

@@ -75,7 +75,12 @@ DOC_ALLOW = frozenset({"README.md"})
 
 
 def tracked_files():
-    r = subprocess.run(["git", "ls-files"], capture_output=True, text=True)
+    try:  # hang-door guard (c113): wedged git child would freeze the check
+        r = subprocess.run(["git", "ls-files"], capture_output=True,
+                           text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        print("FAIL: git ls-files timed out after 60s (wedged git child?)")
+        sys.exit(2)
     if r.returncode != 0:
         print("FAIL: git ls-files failed: " + r.stderr.strip())
         sys.exit(2)
@@ -147,8 +152,12 @@ def check_ignore_rc(path):
     """Prevention authority: `git check-ignore --no-index -q` on a PROBE
     path (never on the index). Returns git's rc: 0 = some ignore rule
     covers it, 1 = uncovered, >1 = the authority itself errored."""
-    r = subprocess.run(["git", "check-ignore", "--no-index", "-q", path],
-                       capture_output=True, text=True)
+    try:  # hang-door guard (c113): see tracked_files()
+        r = subprocess.run(["git", "check-ignore", "--no-index", "-q", path],
+                           capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        print(f"FAIL: git check-ignore timed out after 60s for {path}")
+        sys.exit(2)
     return r.returncode
 
 

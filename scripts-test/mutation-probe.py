@@ -55,7 +55,9 @@ def sig_of(text):
 
 def run(tool, proof, require=None):
     cmd = ['python3', tool, 'verify', proof] + (['--require', require] if require else [])
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    # hang-door guard (c113): a tool hang = timeout, loud crash rc (harness-
+    # loud-is-fine posture; A c117 E3 adjudication for harnesses).
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     return p.returncode
 
 def fixtures_all(d):
