@@ -233,8 +233,12 @@ jobs:
           # workflow_call ref. A movable @vN tag is the frozen-engine
           # float class one layer up (actions/checkout@v4's head IS a
           # force-movable backport branch — gh read-back 2026-08-31).
-          # Parsed-YAML walk (comment prose can't fake a step = B's own
-          # c30 vacuous-RED lesson); zero steps collected = RED (c27
+          # Pure-stdlib indent walk (the dogfood job has pycryptodome
+          # only, PyYAML ABSENT — c21 blind-spot class; the walker is
+          # cross-checked multiset-equal against PyYAML host-side, and
+          # a PYTHONPATH-poisoned no-yaml run proves the runner shape
+          # locally). Comment prose can't fake a step (B's c30
+          # vacuous-RED lesson); zero steps collected = RED (c27
           # vacuous-green rule); PIN_ACTION_REF must agree with the
           # executing secretgate-action ref (leg 1 pins the EXECUTING
           # ref's bytes — same sha on both sides of secrets.yml).

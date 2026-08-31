@@ -8,11 +8,14 @@ v4 tag on actions/checkout is the head of a force-movable backport branch, so
 a supplier force-move swaps the code our gates execute with zero commits on
 our side.
 
-Method (parsed YAML, NOT line-grep — B's own c30 prose lesson: comment text
-can contain 'uses:' = vacuous assert bait): load each workflow/action with a
-YAML parser and walk every `uses` value at step level AND job level
-(workflow_call jobs carry a job-level uses). Comment prose is structurally
-invisible to this walk.
+Method: a PURPOSE-BUILT indent walk (pure stdlib — the runner's dogfood job
+has pycryptodome only, PyYAML absent; C c21 blind-spot lesson: never let the
+host's package set masquerade as the runner's). It tracks the indent column
+of a 'jobs:' block and only treats `uses:` as a step/job ref while inside
+that subtree, so `run:` block scalars and `# comment: uses: ...` prose are
+structurally invisible (B's c30 vacuous-assert lesson, achieved without a
+YAML parser). Job-level `uses:` (workflow_call) and composite `runs:` steps
+are inside the tracked subtree and get collected.
 
 Allowed shapes:
   - 40-hex commit sha            (content address)
@@ -33,39 +36,150 @@ import os
 import re
 import sys
 
-import yaml
-
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 OWN_REPO = "tianzhicdev/ethkey-lite"
 SECRETGATE_ACTION = "tianzhicdev/secretgate-action"
+KEY_RE = re.compile(r"^([A-Za-z0-9_.-]+):\s*(.*)$")
 
 
-def collect_uses(doc, path):
-    """Yield (path, job_or_step_label, uses_value) from a parsed workflow/action."""
+def strip_comment(line):
+    # naive but sufficient for our own files: '#' outside quotes starts a comment
+    in_s = in_d = False
+    for i, ch in enumerate(line):
+        if ch == "'" and not in_d:
+            in_s = not in_s
+        elif ch == '"' and not in_s:
+            in_d = not in_d
+        elif ch == "#" and not in_s and not in_d:
+            return line[:i]
+    return line
+
+
+def walk_yaml(path):
+    """Yield (indent, key, value) for plain `key: value` lines that are OUTSIDE
+    block scalars ('|' / '>') and not inside a block scalar's indented body.
+    Also yield ('- uses', indent_of_dash, value) for '- uses: value' items."""
     out = []
-    if not isinstance(doc, dict):
-        return out
-    jobs = doc.get("jobs")
-    if isinstance(jobs, dict):
-        for job_name, job in jobs.items():
-            if not isinstance(job, dict):
+    block_scalar_indent = None  # lines with indent >= this are opaque
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.rstrip("\n")
+            stripped = line.strip()
+            indent = len(line) - len(line.lstrip(" "))
+            if not stripped:
                 continue
-            if isinstance(job.get("uses"), str):
-                out.append((path, f"job {job_name}", job["uses"]))
-            steps = job.get("steps")
-            if isinstance(steps, list):
-                for i, step in enumerate(steps):
-                    if isinstance(step, dict) and isinstance(step.get("uses"), str):
-                        label = step.get("name") or f"step#{i}"
-                        out.append((path, f"job {job_name}: {label}", step["uses"]))
-    # composite action.yml shape: steps live under runs:
-    runs = doc.get("runs")
-    steps = runs.get("steps") if isinstance(runs, dict) else None
-    if isinstance(steps, list):
-        for i, step in enumerate(steps):
-            if isinstance(step, dict) and isinstance(step.get("uses"), str):
-                label = step.get("name") or f"step#{i}"
-                out.append((path, f"composite: {label}", step["uses"]))
+            if block_scalar_indent is not None:
+                if indent >= block_scalar_indent:
+                    continue  # opaque body
+                block_scalar_indent = None
+            content = strip_comment(line).rstrip()
+            body = content.lstrip(" ")
+            if not body:
+                continue
+            ind = len(content) - len(body)
+            # list item form: "- key: value" (treat the dash as +2 indent)
+            if body.startswith("- "):
+                m = KEY_RE.match(body[2:].strip())
+                if m:
+                    key, val = m.group(1), m.group(2).strip()
+                    # dash-prefix EVERY first key of a list item: the walker
+                    # can't know which key opens the item ('- name:' opens most
+                    # steps, '- uses:' opens some), and collect_uses needs the
+                    # marker to know an item BEGAN at this indent.
+                    out.append((ind + 2, "-" + key, val))
+                    if val in ("|", ">", "|-", ">-", "|+", ">+"):
+                        block_scalar_indent = ind + 2
+                continue
+            m = KEY_RE.match(body)
+            if m:
+                key, val = m.group(1), m.group(2).strip()
+                out.append((ind, key, val))
+                if val in ("|", ">", "|-", ">-", "|+", ">+"):
+                    block_scalar_indent = ind + 1
+    return out
+
+
+def collect_uses(path):
+    """Return list of (label, uses_value) from the jobs: subtree + top-level
+    runs: (composite action.yml)."""
+    lines = walk_yaml(path)
+    out = []
+    # find the indent of 'jobs:' (top level) and 'runs:' for composites
+    def subtree_lines(root_key):
+        root = [ind for (ind, k, v) in lines if k == root_key and ind == 0]
+        if not root:
+            return []
+        ri = root[0]
+        sub = []
+        seen = False
+        for (i, k, v) in lines:
+            if not seen:                      # only AFTER the root key line
+                if (i, k) == (ri, root_key):
+                    seen = True
+                continue
+            if i > ri:
+                sub.append((i, k, v))
+            else:
+                break
+        return sub
+
+    labels = []
+    jobs = subtree_lines("jobs")
+    if jobs:
+        depth2 = min(x for (x, _k, _v) in jobs)          # job-name indent
+        job_name = "<job>"
+        in_steps = False
+        steps_indent = None
+        step_item = None    # (indent_of_dash, name) of current '- ' list item
+        for (i, k, v) in jobs:
+            if i == depth2:                              # new job starts
+                job_name, in_steps, steps_indent, step_item = k, False, None, None
+            if k == "steps":
+                in_steps, steps_indent = True, i
+                continue
+            if in_steps and steps_indent is not None and i <= steps_indent:
+                in_steps, step_item = False, None        # left the steps block
+            if k.startswith("-"):                        # new list item starts
+                step_item = (i, None)
+                if k == "-name":
+                    step_item = (i, v.strip("'"))
+            elif step_item is not None and i >= step_item[0]:
+                # continuation key of the current '- ' item (YAML allows the
+                # item's own keys at the dash's own indent, e.g. '- name:' then
+                # a sibling 'uses:' at the SAME column — verified-release.yml
+                # has exactly that shape; strict '>' missed a real step)
+                if k == "name":
+                    step_item = (step_item[0], v.strip("'"))
+                elif k == "uses":
+                    labels.append((f"{job_name}: {step_item[1] or 'step'}", v))
+                    continue
+            if k == "-uses" and in_steps:
+                nm = step_item[1] if step_item else None
+                labels.append((f"{job_name}: {nm or 'step'}", v))
+            elif k == "uses" and not in_steps:
+                labels.append((f"job {job_name}", v))
+    else:
+        # composite action.yml: runs: -> steps: -> list items
+        runs = subtree_lines("runs")
+        in_steps = False
+        steps_indent = None
+        step_item = None
+        for (i, k, v) in runs:
+            if k == "steps":
+                in_steps, steps_indent = True, i
+                continue
+            if in_steps and steps_indent is not None and i <= steps_indent:
+                in_steps, step_item = False, None
+            if k.startswith("-"):
+                step_item = (i, v.strip("'") if k == "-name" else None)
+            elif step_item is not None and i >= step_item[0] and k == "uses":
+                labels.append((f"composite: {step_item[1] or 'step'}", v))
+                continue
+            if k == "-uses" and in_steps:
+                nm = step_item[1] if step_item else None
+                labels.append((f"composite: {nm or 'step'}", v))
+    for label, v in labels:
+        out.append((label, v.strip("'")))
     return out
 
 
@@ -87,7 +201,8 @@ def main() -> int:
         print("usage: workflow-pins.py [repo-root]", file=sys.stderr)
         return 2
     targets = []
-    for dirpath, _dirs, files in os.walk(os.path.join(root, ".github")):
+    gh = os.path.join(root, ".github")
+    for dirpath, _dirs, files in os.walk(gh):
         for f in files:
             if f.endswith((".yml", ".yaml")):
                 targets.append(os.path.join(dirpath, f))
@@ -98,22 +213,20 @@ def main() -> int:
     collected = []
     secrets_pin_env = set()
     for path in sorted(targets):
-        with open(path, encoding="utf-8") as fh:
-            doc = yaml.safe_load(fh)
-        collected += collect_uses(doc, path)
-        # remember PIN_ACTION_REF values declared in the secrets workflow
-        if os.path.basename(path) == "secrets.yml" and isinstance(doc, dict):
-            for job in (doc.get("jobs") or {}).values():
-                for step in (job or {}).get("steps", []) or []:
-                    env = step.get("env") or {}
-                    v = env.get("PIN_ACTION_REF")
-                    if isinstance(v, str):
-                        secrets_pin_env.add(v)
+        uses = collect_uses(path)
+        collected += [(path, label, v) for (label, v) in uses]
+        if os.path.basename(path) == "secrets.yml":
+            for (_i, k, v) in walk_yaml(path):
+                if k == "PIN_ACTION_REF":
+                    secrets_pin_env.add(v.strip("'\"").split(" #")[0].strip())
     if not collected:
         print("::error::ZERO uses: steps found across the parsed YAML — a "
               "vacuous green tripwire is worse than none; failing.",
               file=sys.stderr)
         return 1
+    # cross-check vs grep: any raw 'uses:' line with a value that the walk
+    # never collected = walker bug (or prose in a file we should trust less);
+    # prose is allowed to differ ONLY inside comments — count non-comment hits.
     bad = 0
     for path, label, value in collected:
         if allowed(value):
