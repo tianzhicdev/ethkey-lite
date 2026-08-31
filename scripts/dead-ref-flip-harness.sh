@@ -77,6 +77,25 @@ grep -q 'tianzhicdev/secretgate/proofs/nonexistent.md' "$d/README.md" || { echo 
 out=$(run "$d" 2>&1); rc=$?
 check F6_external_ref_green 0 "$rc" "$out"
 
+# F7: runtime-scope exclusion GREEN — README references .git/<something>
+#     (the LIVE hookpack false-RED class caught by the c42 sibling probe:
+#     a .git/ path can never be an index entry; the rail must not
+#     false-RED it). 'runtime-scope-flip' doesn't exist anywhere; GREEN
+#     proves the exclusion, not a hole (F8 is its must-STILL-be-RED pair).
+d=$(fresh f7)
+printf '\nThe tool installs into `.git/hooks/runtime-scope-flip`.\n' >> "$d/README.md"
+grep -q 'runtime-scope-flip' "$d/README.md" || { echo "MUTATION-FAILED F7"; exit 1; }
+out=$(run "$d" 2>&1); rc=$?
+check F7_dotgit_runtime_scope_green 0 "$rc" "$out"
+
+# F8: must-STILL-be-RED pair for F7 — '.git' NOT as first component
+#     (src/.git/bait.md) is an ordinary dead repo-local path and stays RED.
+d=$(fresh f8)
+printf '\nSee `src/.git/bait-flip.md` for context.\n' >> "$d/README.md"
+grep -q 'src/.git/bait-flip.md' "$d/README.md" || { echo "MUTATION-FAILED F8"; exit 1; }
+out=$(run "$d" 2>&1); rc=$?
+check F8_nested_dotgit_still_red 1 "$rc" "$out" "src/.git/bait-flip.md"
+
 echo "dead-ref flip harness: $pass PASS, $fail FAIL"
 rm -rf "$BASE"
 [ "$fail" = 0 ]

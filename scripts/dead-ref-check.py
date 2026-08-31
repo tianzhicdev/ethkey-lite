@@ -17,6 +17,14 @@ Checks (exit 1 on any violation, exit 2 on missing inputs — fail-closed):
      FILE or a tracked-directory prefix. Fenced blocks are copy-paste
      snippets for the CONSUMER's repo (proofs/release-proof.md = "in YOUR
      repo"), so prose-scope is the honest boundary — documented, not guessed.
+     RUNTIME-SCOPE exclusion: a reference whose FIRST path component is
+     `.git` names git's own private dir in whichever working tree it lives
+     in — git never tracks `.git/`, so such a path can NEVER be an index
+     entry and checking it is a category error. (Found by running this rail
+     over sibling repos 2026-08-31: hookpack's README honestly references
+     `.git/hooks/pre-commit` / `.git/hookpack/cache/` — its whole product
+     installs INTO .git — and the rail false-RED'd them. The exclusion is
+     FIRST-component-only: `src/.git/bait.md` still goes RED, flip F8.)
   B. .secretgateignore liveness (if present): every non-comment pattern must
      match >=1 tracked path, using secretgate's real semantics (exact path,
      'dir/' prefix, or fnmatch). A pattern matching NOTHING is a dead
@@ -136,6 +144,8 @@ def main():
     for r_ in refs:
         rel = r_[2:] if r_.startswith("./") else (r_[1:] if r_.startswith("/") else r_)
         rel = rel.rstrip("/")
+        if rel.split("/")[0] == ".git":
+            continue  # runtime-scope: git's own dir, never indexable (see docstring)
         if rel in seen:
             continue
         seen.add(rel)
