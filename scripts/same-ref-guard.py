@@ -31,7 +31,14 @@ import re
 import subprocess
 import sys
 
-BASELINE_TAG = "v0.8"  # bump deliberately on each release
+# BASELINE stays v0.8 DELIBERATELY at the v0.9 ship (c68): every pinned
+# strictness flip in EXPECTED (c63 slice-blindness + the three c68 bundle
+# fixtures) is a 0->1 pair MEASURED against the v0.8 prefix-parser. Bumping
+# the baseline to v0.9 would collapse every pair to 1->1 = 'flip did NOT
+# occur' = the guard would trade its whole recorded class-evidence for one
+# generation of recency. Re-lenienting detection still holds: HEAD must keep
+# matching the v0.8-pinned table. Bump only when the table is re-derived.
+BASELINE_TAG = "v0.8"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # fixture -> expected exit code of `verify --require <SIGNER>`. Either an int
@@ -55,6 +62,18 @@ EXPECTED = {
     # verifies EVERY block -> rc=1 naming slice #2. The 0->1 flip IS the fix;
     # it stays a pinned pair so ANY future flip in either direction goes red.
     "c63-concat-fixture.md": {"old": 0, "head": 1},
+    # c68 v0.9 bundle family — each blessed (rc=0) by the v0.8 prefix-parser,
+    # killed (rc=1) by HEAD's slice-per-receipt verifier. All three measured
+    # before pinning (see agents/C/work/c68-v09-ship/):
+    # tampered payload AFTER a good receipt (bless-by-invisibility, the c63
+    # shape re-pinned as a 2-receipt bundle), truncated tail (BEGIN without
+    # END must fail CLOSED), and a good-1 + valid-but-wrong-signer-2 bundle
+    # (a --require gate must not ride the first signer through).
+    "c68-bundle-tampered2.md": {"old": 0, "head": 1},
+    "c68-bundle-trunc.md": {"old": 0, "head": 1},
+    "c68-bundle-signermix.md": {"old": 0, "head": 1},
+    # v0.9 artifact receipt: valid under BOTH tools (single slice, C signer).
+    "v0.9-multislice.md": 0,
 }
 
 # signer identity for the receipts/fixtures that sign to the C wallet;

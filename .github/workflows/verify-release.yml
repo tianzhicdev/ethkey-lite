@@ -10,7 +10,7 @@ name: verify-release (reusable)
 #
 #   jobs:
 #     verify:
-#       uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.8
+#       uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.9
 #       with:
 #         receipt: proofs/mytool-v1.0.0-proof.md
 #         require: "0xYourWalletAddress"   # quote it: YAML int-casts bare 0x…
@@ -35,7 +35,7 @@ on:
         description: ethkey-lite ref the verifier tool is checked out at (bump only if you deliberately upgrade)
         required: false
         type: string
-        default: v0.8
+        default: v0.9
     outputs:
       signer:
         description: Recovered signer address from the receipt signature
@@ -48,7 +48,7 @@ on:
         description: Receipt path (this repo when run here)
         required: true
         type: string
-        default: proofs/v0.7-verify-workflow.md
+        default: proofs/v0.9-multislice.md
       require:
         description: Expected signer address
         required: true

@@ -450,7 +450,9 @@ jobs:
             --fixture-dir proofs --fixtures \
             c12-dup-field-fixture.md c18-forged-signer-fixture.md \
             c18-throwaway-signed-fixture.md v0.7-verify-workflow.md \
-            v0.8-strict-recover.md
+            v0.8-strict-recover.md v0.9-multislice.md \
+            c63-concat-fixture.md c68-bundle-tampered2.md \
+            c68-bundle-trunc.md c68-bundle-signermix.md
           echo "OK: same-ref probe = 0 divergences (strictness invariant holds)"
           # VACUOUS-gate pin (A c34 upgrade, ported c30): a fixture-less run
           # must die exit 2, NEVER print 'agree' rows. The A c34 defect class:
@@ -475,7 +477,9 @@ jobs:
             --new ethkey.py --fixture-dir proofs --fixtures \
             c12-dup-field-fixture.md c18-forged-signer-fixture.md \
             c18-throwaway-signed-fixture.md v0.7-verify-workflow.md \
-            v0.8-strict-recover.md > /tmp/probe_v07.out
+            v0.8-strict-recover.md v0.9-multislice.md \
+            c63-concat-fixture.md c68-bundle-tampered2.md \
+            c68-bundle-trunc.md c68-bundle-signermix.md > /tmp/probe_v07.out
           code=$?
           set -e
           [ "$code" -eq 1 ] || { echo "FAIL: v0.7-vs-main probe exited $code, expected 1 (probe went vacuous?)"; exit 1; }

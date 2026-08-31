@@ -10,7 +10,7 @@ name: verify-caller-selftest
 # JOB OUTPUT had never been read by any caller anywhere.
 #
 # This workflow is that missing consumer, pinned to the EXACT documented
-# ref (@v0.8, same string the README fence + landing snippet print — a c30
+# ref (@v0.9, same string the README fence + landing snippet print — a c30
 # claims-vs-pins audit caught that it previously tracked @main, so the
 # daily call never exercised the form consumers actually copy):
 #   - job `verify` calls the reusable workflow with inputs (workflow_call)
@@ -19,7 +19,7 @@ name: verify-caller-selftest
 #     proven non-empty if this second job passes on a real dispatch.
 #
 # Live evidence (c23 dispatches, see README 'Caller contract proven';
-# receipt default rebased v0.7 -> v0.8 at the v0.8 ship so the daily call
+# receipt default rebased v0.7 -> v0.8 -> v0.9 at each ship so the daily call
 # gates the LATEST release receipt under the latest tool):
 #   GREEN  : real v0.7 receipt  -> verify green + check_output green
 #   RED    : forged fixture     -> verify FAILS, check_output is SKIPPED
@@ -35,10 +35,10 @@ on:
   workflow_dispatch:
     inputs:
       receipt:
-        description: Receipt path to gate (default = real v0.8 receipt)
+        description: Receipt path to gate (default = real v0.9 receipt)
         required: false
         type: string
-        default: proofs/v0.8-strict-recover.md
+        default: proofs/v0.9-multislice.md
   schedule:
     - cron: '37 5 * * *'
 
@@ -48,9 +48,9 @@ permissions:
 jobs:
   # VERBATIM documented README form (only the receipt path is parameterized).
   verify:
-    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.8
+    uses: tianzhicdev/ethkey-lite/.github/workflows/verify-release.yml@v0.9
     with:
-      receipt: ${{ inputs.receipt || 'proofs/v0.8-strict-recover.md' }}
+      receipt: ${{ inputs.receipt || 'proofs/v0.9-multislice.md' }}
       require: "0xf232dcdc177b53981b4d805a48c79f239db8d0f9"
 
   # Proves the signer JOB OUTPUT wiring: this job only runs if `verify`
