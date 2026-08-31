@@ -224,6 +224,77 @@ jobs:
           print(f'OK: consumer version refs consistent across 4 surfaces ({vals["README"]})')
           EOF
 
+      - name: "c110 paste-edge doc-pin: README consumer fence is content-addressed + ref live-resolved (A c113 port)"
+        run: |
+          set -euo pipefail
+          # The consumer COPIES the README fence verbatim — that's the paste
+          # edge every version-string pin was blind to (A's c113 find ported):
+          # a future edit to the pasted bytes (mutable tag swap, dropped
+          # quote, drifted path) stays invisible to a drift matrix that only
+          # compares extracted version strings. Pin the fence's OWN bytes:
+          # sha256 measured off committed bytes pre-ship (D0 leg), asserted
+          # here every run. Any intentional fence change MUST re-measure +
+          # update the pin in the same commit (an honest, greppable ritual),
+          # and the drift matrix below still catches an UN-updated ref.
+          # A's c100 pin-doc law: this gate needs an allow-mark on its own
+          # payload line because a bare 64-hex here is a content address,
+          # exactly what the pin is. <!-- secretgate: allow sha256 content pin -->
+          EXPECT_FENCE_SHA=1bfbba1c3a7bb3364411608bca406fb85039fcefe81e08d4cf82776f9876c1f5
+          python3 - <<'EOF'
+          import hashlib, re, sys
+          src = open('README.md').read()
+          blocks = re.findall(r'^```(?:yaml|yml)\n(.*?)^```', src, re.M | re.S)
+          fences = [b for b in blocks if 'uses:' in b and 'verify-release.yml@' in b]
+          assert len(fences) == 1, f'FAIL: expected exactly 1 consumer fence, got {len(fences)}'
+          f = fences[0]
+          got = hashlib.sha256(f.encode()).hexdigest()
+          want = __import__('os').environ['EXPECT_FENCE_SHA']
+          assert got == want, f'FAIL: README consumer fence bytes changed\\n  want {want}\\n  got  {got}\\n  re-measure + update the pin in the SAME commit'
+          m = re.search(r'verify-release\.yml@(v[\d.]+)', f)
+          assert m, 'FAIL: consumer fence lost its @vX.Y ref'
+          print(f'OK: README consumer fence content-addressed ({got[:12]}…), ref {m.group(1)}')
+          EOF
+          # D2 leg: the fence ref must RESOLVE LIVE — a tag that 404s at
+          # paste time is a dead-on-arrival install; a string-equality
+          # matrix can't see a ref that exists nowhere.
+          FENCE_REF=$(python3 -c "import re; print(re.search(r'verify-release\\.yml@(v[\\d.]+)', open('README.md').read()).group(1))")
+          case "$FENCE_REF" in
+            v[0-9]*.[0-9]*) : ;;
+            *) echo "FAIL: fence ref malformed: $FENCE_REF"; exit 2 ;;
+          esac
+          RESP="$(curl -s "https://api.github.com/repos/tianzhicdev/ethkey-lite/contents/.github/workflows/verify-release.yml?ref=${FENCE_REF}")"
+          printf '%s' "$RESP" | python3 -c '
+          import base64, json, sys
+          d = json.load(sys.stdin)
+          assert "content" in d, f"FAIL: fence ref does not resolve live: {d.get(chr(34)+chr(34), d)}"
+          body = base64.b64decode(d["content"]).decode()
+          assert "workflow_call" in body, "FAIL: resolved workflow lost workflow_call (wrong file at ref?)"
+          print("OK: fence ref resolves live at api.github.com + workflow_call present")'
+          # D3 leg: drift matrix WIDENED 4 -> 6 surfaces — the reusable
+          # workflow's HEADER-COMMENT paste form and the c106 alarm checkout
+          # `ref:` join the equality set (both name a ref consumers copy or
+          # gate at; neither was compared anywhere before c110).
+          python3 - <<'EOF'
+          import re
+          pat = r'verify-release\.yml@(v\d+\.\d+(?:\.\d+)?)'
+          readme = re.search(pat, open('README.md').read())
+          index = re.search(pat, open('index.html').read())
+          wfr = re.search(r"ethkey-ref:\s*\n(?:[^:\n]*\n)?\s*(?:description|required|type):\s*[^\n]*\n\s*(?:description|required|type):\s*[^\n]*\n\s*(?:description|required|type):\s*[^\n]*\n\s*default:\s*'?(v\d+\.\d+(?:\.\d+)?)'?",
+                          open('.github/workflows/verify-release.yml').read())
+          wfcomment = re.search(pat, open('.github/workflows/verify-release.yml').read())
+          caller_y = open('.github/workflows/verify-caller-selftest.yml').read()
+          caller = re.search(pat, caller_y)
+          alarm = re.search(r'\bref:\s*(v\d+\.\d+(?:\.\d+)?)', caller_y)
+          refs = {'README fence': readme, 'index snippet': index,
+                  'ethkey-ref default': wfr, 'workflow header comment': wfcomment,
+                  'caller-selftest uses-ref': caller, 'alarm checkout ref': alarm}
+          missing = [k for k, m in refs.items() if not m]
+          assert not missing, f'FAIL: version ref not found in: {missing}'
+          vals = {k: m.group(1) for k, m in refs.items()}
+          assert len(set(vals.values())) == 1, f'FAIL: version refs drifted across 6 surfaces: {vals}'
+          print(f'OK: consumer version refs consistent across 6 surfaces ({vals["README fence"]})')
+          EOF
+
       - name: "CI uses: refs are content addresses (B c31 tripwire, hardened port)"
         run: |
           set -euo pipefail
