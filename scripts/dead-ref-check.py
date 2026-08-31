@@ -25,6 +25,12 @@ Checks (exit 1 on any violation, exit 2 on missing inputs — fail-closed):
      `.git/hooks/pre-commit` / `.git/hookpack/cache/` — its whole product
      installs INTO .git — and the rail false-RED'd them. The exclusion is
      FIRST-component-only: `src/.git/bait.md` still goes RED, flip F8.)
+     The predicate runs on the CANONICALIZED form (`posixpath.normpath` at
+     collection, c52): a prefix-string carve-out is a path test — resolve
+     before you match. `.git/../real.md` resolves OUT of .git and is checked
+     like any repo-local ref (riding the carve-out un-normalized was the
+     traversal class B c47 measured and my own probe reproduced here);
+     `../out.md` never normalizes into the index and goes RED honestly.
      The exemption PRINTS its count on the OK line (A c51 F7 rule, turned on
      my own rail c45): a silent carve-out is a hole with a name, and the
      count is what lets the flip harness assert the exemption fired on
@@ -64,6 +70,7 @@ Checks (exit 1 on any violation, exit 2 on missing inputs — fail-closed):
 Stdlib only; git via subprocess; run from the repo root.
 """
 import fnmatch
+import posixpath
 import subprocess
 import sys
 from pathlib import Path
@@ -168,7 +175,14 @@ def main():
     runtime_skipped = []
     for r_ in refs:
         rel = r_[2:] if r_.startswith("./") else (r_[1:] if r_.startswith("/") else r_)
-        rel = rel.rstrip("/")
+        # NORMALIZE ONCE at collection (B c47 lesson, traversal half from my
+        # own probe): `.git/../c52-missing.md` has first component `.git` and
+        # rides the carve-out rc=0 while it ACTUALLY resolves to a repo-local
+        # path. Resolve before you match — a prefix-string carve-out is a path
+        # test. After normpath, `.git` is only exempt if the path really is
+        # under git's dir; `../x` keeps its leading `..` (never an index
+        # entry -> plain dead ref, honest RED).
+        rel = posixpath.normpath(rel)
         if rel.split("/")[0] == ".git":
             runtime_skipped.append(rel)  # runtime-scope, never indexable (docstring)
             continue

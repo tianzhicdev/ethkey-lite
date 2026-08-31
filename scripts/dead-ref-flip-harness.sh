@@ -215,6 +215,42 @@ else
   echo "FAIL[V3_sloppy_branch_scope_strict] rc=$rc:"; echo "$out" | sed 's/^/    /'; fail=$((fail+1))
 fi
 
+# ---- V4 (c52): traversal class — `.git/../missing.md` rides the
+# first-component carve-out if the predicate is a raw-string test. My
+# cycle-start probe REPRODUCED the blessing on shipped 32da58b bytes (rc=0,
+# name swallowed into 'exemptions: 2'), then the normpath-at-collection fix
+# RED'd it. V4 pins the post-fix verdict; V4b pins the pre-fix blessing on
+# the pinned pre-fix sha (B c47 F2P shape: the OLD bytes are data, checked
+# out by sha, not mutated) so the fix stays load-bearing forever.
+# Pinned SHA, not HEAD~1: coordinates rot like values (B c47 lesson — their
+# F2P HEAD~1 anchor rotated under their own commits one cycle later). 32da58b
+# = the exact shipped bytes my cycle-start probe blessed the ref on.
+PREFIX_SHA=32da58b
+d=$(synth v4); printf '\\nSee `.git/../c52-missing.md` for context.\\n' >> "$d/README.md"
+git -C "$d" add -A >/dev/null && git -C "$d" commit -qm v4 >/dev/null
+out=$(cd "$d" && python3 "$RRAIL" 2>&1); rc=$?
+if [ "$rc" = 1 ] && grep -q 'not tracked: .*/c52-missing.md' <<<"$out" \
+   && grep -q 'not tracked' <<<"$out" && ! grep -q 'carve-out' <<<"$out"; then
+  echo "PASS[V4_traversal_red_not_carveout]"; pass=$((pass+1))
+else
+  echo "FAIL[V4_traversal_red_not_carveout] rc=$rc:"; echo "$out" | sed 's/^/    /'; fail=$((fail+1))
+fi
+# V4b: pre-fix bytes at the pinned sha must still BLESS the exact same ref
+# (if this ever goes RED, the blessing class was never real or the pin moved —
+# either way the claim in the commit message needs re-checking).
+dp="$BASE/v4b-prefix"; rm -rf "$dp"; git clone -q --no-hardlinks "$SRC" "$dp"
+git -C "$dp" checkout -q "$PREFIX_SHA" -- scripts/dead-ref-check.py
+# append the traversal ref to THIS tree's own README (real refs intact) —
+# first harness draft copied the synth README in and false-RED'd on its
+# `a/b.md` ref = wrong-target class, caught before trusting the fail
+printf '\\nSee `.git/../c52-missing.md` for context.\\n' >> "$dp/README.md"
+out=$(cd "$dp" && python3 scripts/dead-ref-check.py 2>&1); rc=$?
+if [ "$rc" = 0 ] && grep -q 'c52-missing.md' <<<"$out"; then
+  echo "PASS[V4b_prefix_sha_blessing_pinned @${PREFIX_SHA:0:7}]"; pass=$((pass+1))
+else
+  echo "FAIL[V4b_prefix_sha_blessing_pinned] rc=$rc:"; echo "$out" | sed 's/^/    /'; fail=$((fail+1))
+fi
+
 echo "dead-ref flip harness: $pass PASS, $fail FAIL"
 rm -rf "$BASE"
 [ "$fail" = 0 ]
