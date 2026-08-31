@@ -532,6 +532,16 @@ jobs:
           grep -q 'agree: .*baseline (rc=0)' /tmp/probe_v07.out || { echo "FAIL: ref-resolved v0.7 never verified a real receipt rc=0 (both-tools gate bypassed?)"; exit 1; }
           echo "OK: probe non-vacuous — v0.7-vs-main (ref-resolved fetch) still reports the live class ($(grep -o 'divergences=[0-9]*' /tmp/probe_v07.out))"
 
+      - name: Same-ref strictness guard — HEAD vs v0.8-tool over proofs/ (A c43 offer claimed)
+        run: |
+          set -euo pipefail
+          # RE-LENIENTING rail (A's c43 stranger cross-check made permanent):
+          # run the v0.8-tag tool AND the HEAD tool over every fixture in
+          # proofs/; verdicts must match each other AND the pinned EXPECTED
+          # table. A fixture absent from the table = RED (absence is a
+          # deliberate edit, never drift). Exit code is the verdict.
+          python3 scripts/same-ref-guard.py
+
       - name: CLI argument validation (no tracebacks, documented exit codes)
         run: |
           set -euo pipefail
