@@ -29,6 +29,12 @@ check() { # name expected_rc actual_rc output [must-name-substring]
 
 # CONTROL: pristine clone green
 d=$(fresh control); out=$(run "$d" 2>&1); rc=$?
+# c52 (A c58 digit-literal class): capture the CHECKED baseline from the
+# control's own OK-line — F7's equality assert below compares against this
+# computed number, not a hand-written '9' that rots the day README grows a
+# real ref.
+CTRL_CHECKED=$(grep -oE '\([0-9]+ checked' <<<"$out" | grep -oE '[0-9]+' | head -1)
+[ -n "$CTRL_CHECKED" ] || { echo "FAIL[CONTROL]: no '(N checked' on OK-line (contract)"; fail=$((fail+1)); }
 # c45: baseline exemption count must print 0 — the count is the CONTROL's
 # own assertion now, so F7's '+1' is anchored to a measured zero.
 if [ "$rc" = 0 ] && ! grep -q 'runtime-scope .git/ exemptions: 0' <<<"$out"; then
@@ -99,9 +105,9 @@ check F7_dotgit_runtime_scope_green 0 "$rc" "$out"
 # NOT appear as a checked path (seen count stays 9 = the README's baseline).
 if [ "$rc" = 0 ]; then
   grep -q 'runtime-scope .git/ exemptions: 1 \[.git/hooks/runtime-scope-flip\]' <<<"$out" \
-    && grep -q '9 checked' <<<"$out" \
-    && { echo "PASS[F7_printed_count_names_mutation]"; pass=$((pass+1)); } \
-    || { echo "FAIL[F7_printed_count_names_mutation]: OK-line:"; echo "$out" | grep 'prose paths' | sed 's/^/    /'; fail=$((fail+1)); }
+    && grep -qE "\($CTRL_CHECKED checked" <<<"$out" \
+    && { echo "PASS[F7_printed_count_names_mutation] (checked baseline stays $CTRL_CHECKED, measured not literal)"; pass=$((pass+1)); } \
+    || { echo "FAIL[F7_printed_count_names_mutation]: OK-line (baseline was '$CTRL_CHECKED checked'):"; echo "$out" | grep 'prose paths' | sed 's/^/    /'; fail=$((fail+1)); }
 fi
 
 # F8: must-STILL-be-RED pair for F7 — '.git' NOT as first component
