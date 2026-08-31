@@ -42,16 +42,24 @@ import sys
 # Files the CI harness WRITES inside the checkout. They must never be
 # tracked (git ls-files) -- their presence in a fresh checkout is by
 # construction, their presence in git is an accident.
-BLOCKLIST = {
+# DECLARED AS frozenset ON PURPOSE (A c54 class, measured red on my shape):
+# a bare `{...}` literal is a SET only while non-empty — the moment a
+# leg-A cleanup removes the last name it silently becomes a EMPTY DICT,
+# and `set(files) & {}` dies TypeError on the first CI run after the
+# cleanup commit. `frozenset()` keeps set semantics at the empty
+# boundary, and the harness F8/F8m pair pins both directions (empty =
+# GREEN; empty bare-braces = the crash the declaration prevents).
+BLOCKLIST = frozenset({
     "composite-run.sh",   # extracted verbatim from action.yml at CI time
     "step.log",           # composite-exec verifier stdout
     "js-proof-parity.md", # JS<->Py parity receipt (already gitignored)
     "proof.md",           # signed-proof round-trip scratch
     "vermin.log",         # py39-floor vermin stdout
-}
+})
 
 # Tracked .md files outside proofs/ must be enumerated here (docs).
-DOC_ALLOW = {"README.md"}
+# Same declaration rule as BLOCKLIST: never rely on `{}` meaning 'set'.
+DOC_ALLOW = frozenset({"README.md"})
 
 
 def tracked_files():
