@@ -74,6 +74,12 @@ EXPECTED = {
     "c68-bundle-signermix.md": {"old": 0, "head": 1},
     # v0.9 artifact receipt: valid under BOTH tools (single slice, C signer).
     "v0.9-multislice.md": 0,
+    # v1.0 artifact receipt: valid under BOTH tools (single slice, C signer,
+    # verified via literal --require). The v1.0 EMPTY-require behavior is
+    # pinned where it lives — the selftest args-layer asserts — not here:
+    # this guard's comparison always passes a literal addr (c104: the pin
+    # was measured rc=0 on v0.8 + HEAD before pinning, non-vacuous).
+    "v1.0-empty-require.md": 0,
 }
 
 # signer identity for the receipts/fixtures that sign to the C wallet;
