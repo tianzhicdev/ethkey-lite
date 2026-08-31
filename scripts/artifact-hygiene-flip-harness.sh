@@ -16,6 +16,14 @@
 #   frozenset() declaration must keep set semantics, rc 0) / F8m the
 #   crash-mutant: same empty set re-declared as bare `{}` = dict ->
 #   TypeError names itself (the crash the declaration prevents).
+#   F9 blocklist += a name with NO ignore line = catch-without-prevent RED
+#   (B c44 offer, c49; mutation pre-flighted as UNCOVERED per B's weak-
+#   mutation lesson: scan.out was eaten by their own *.out line) / F9t the
+#   must-GREEN twin: same name + ignore line = 7/7 parity prints / F9b the
+#   derived half: a NEW checkout `path: .newclone` step (no ignore line)
+#   REDs through the probe-CHILD shape '.newclone/probe' (dir-only rules
+#   never match the bare dir) / F10 fail-closed: PATH-shadowed git exiting
+#   3 for check-ignore -> rail exits 2 and NAMES the crash, never a verdict.
 set -u
 SRC="$1"   # repo worktree to copy
 HARNESS_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -33,6 +41,7 @@ run_rail () { cd "$1" && python3 scripts/artifact-hygiene.py; }
 D=$(fresh_copy control); cd "$D"; out=$(run_rail .); code=$?
 [ $code -eq 0 ] || { echo "FAIL[control]: exit $code"; echo "$out"; fails=1; }
 echo "$out" | grep -q 'artifact-hygiene: OK' || { echo "FAIL[control]: no OK line"; fails=1; }
+echo "$out" | grep -q 'catch-vs-prevent parity: 6/6' || { echo "FAIL[control]: leg E parity line absent/wrong count"; echo "$out"; fails=1; }
 echo "OK[control]: exit 0"
 
 # F1 — the original accident: step.log re-added to the index
@@ -145,5 +154,72 @@ out=$(run_rail . 2>&1); code=$?   # the TypeError rides STDERR — capture both 
 echo "$out" | grep -qi 'TypeError' || { echo "FAIL[F8m]: crash is not the TypeError this class makes"; echo "$out"; fails=1; }
 echo "OK[F8m]: empty bare-braces = dict -> TypeError crash reproduced (declaration earns keep)"
 
-cd /; rm -rf /tmp/c40-flips
-[ $fails -eq 0 ] && echo "FLIPS: 10/10 OK" || { echo "FLIPS: FAILURES"; exit 1; }
+# F9 — c49 leg E (B c44 offer): a blocklist entry WITHOUT an ignore line =
+# catch-without-prevent. B's weak-mutation lesson pinned first: pre-flight
+# the mutation as UNCOVERED (check-ignore rc=1) BEFORE trusting the expected
+# RED, so the rail can't false-RED and the flip can't green-for-wrong-reason.
+D=$(fresh_copy f9); cd "$D"
+python3 - <<'PYEOF'
+import re
+src = open("scripts/artifact-hygiene.py").read()
+new = src.replace("    \"vermin.log\",         # py39-floor vermin stdout\n",
+                  "    \"vermin.log\",         # py39-floor vermin stdout\n    \"c49-exfil.dat\",      # mutant name, NO ignore line\n", 1)
+assert new != src, "mutation did not land"
+open("scripts/artifact-hygiene.py", "w").write(new)
+PYEOF
+grep -qx '    "c49-exfil.dat",      # mutant name, NO ignore line' scripts/artifact-hygiene.py || { echo "FAIL[F9]: mutation not on disk"; fails=1; }
+git check-ignore --no-index -q c49-exfil.dat; [ $? -eq 1 ] || { echo "FAIL[F9]: pre-flight — mutant already covered by an existing rule = weak mutation"; fails=1; }
+out=$(run_rail .); code=$?
+[ $code -eq 1 ] || { echo "FAIL[F9]: exit $code, expected 1 (parity leg not firing?)"; echo "$out"; fails=1; }
+echo "$out" | grep -q 'c49-exfil.dat' || { echo "FAIL[F9]: RED does not name the uncovered path"; fails=1; }
+echo "OK[F9]: catch-without-prevent RED, names the uncovered name"
+
+# F9t — must-GREEN twin: same blocklist add WITH the ignore line -> parity
+# prints 7/7 GREEN (the exclusion needs its proven-green twin, c38 rule).
+D=$(fresh_copy f9t); cd "$D"
+python3 - <<'PYEOF'
+import re
+src = open("scripts/artifact-hygiene.py").read()
+new = src.replace("    \"vermin.log\",         # py39-floor vermin stdout\n",
+                  "    \"vermin.log\",         # py39-floor vermin stdout\n    \"c49-exfil.dat\",      # mutant name, WITH ignore line\n", 1)
+assert new != src, "mutation did not land"
+open("scripts/artifact-hygiene.py", "w").write(new)
+PYEOF
+echo "c49-exfil.dat" >> .gitignore
+out=$(run_rail .); code=$?
+[ $code -eq 0 ] || { echo "FAIL[F9t]: exit $code, expected 0"; echo "$out"; fails=1; }
+echo "$out" | grep -q 'catch-vs-prevent parity: 7/7' || { echo "FAIL[F9t]: parity line does not print 7/7"; echo "$out"; fails=1; }
+echo "OK[F9t]: name + ignore line = GREEN, parity count moves 6/6 -> 7/7"
+
+# F9b — derived half of leg E: a NEW checkout `path: .newclone` step with no
+# ignore line. The probe is the CHILD path '.newclone/probe' (measured: a
+# dir-only rule never matches the bare dir name, so bare-dir probing would
+# false-RED a correctly-ignored clone).
+D=$(fresh_copy f9b); cd "$D"
+python3 - <<'PYEOF'
+src = open(".github/workflows/selftest.yml").read()
+anchor = "      - name: Artifact hygiene"
+assert anchor in src, "anchor step name not found"
+new = src.replace(anchor, "      - name: c49 mutant clone step\n        uses: actions/checkout@v4\n        with:\n          path: .newclone\n\n" + anchor, 1)
+assert new != src, "mutation did not land"
+open(".github/workflows/selftest.yml", "w").write(new)
+PYEOF
+git check-ignore --no-index -q .newclone/probe; [ $? -eq 1 ] || { echo "FAIL[F9b]: pre-flight — .newclone/probe already covered = weak mutation"; fails=1; }
+out=$(run_rail .); code=$?
+[ $code -eq 1 ] || { echo "FAIL[F9b]: exit $code, expected 1 (derived prefix not probed?)"; echo "$out"; fails=1; }
+echo "$out" | grep -q "'.newclone/probe'" || { echo "FAIL[F9b]: RED does not name the child probe path"; echo "$out"; fails=1; }
+echo "$out" | grep -q "'.newclone/'" || { echo "FAIL[F9b]: derived set does not print the new prefix (announce-yourself)"; fails=1; }
+echo "OK[F9b]: new checkout path: derived, printed, and its uncovered child RED"
+
+# F10 — fail-closed authority (B c43/c44 FLIP5b shape, authoritative unit
+# probe): PATH-shadowed git that exits 3 ONLY for check-ignore -> the rail
+# must die exit 2 NAMING the crash, never print a verdict off broken eyes.
+D=$(fresh_copy f10); cd "$D"
+mkdir -p /tmp/c49-flips/bin && printf '#!/bin/sh\nif [ "$1" = "check-ignore" ]; then exit 3; fi\nexec /usr/bin/git "$@"\n' > /tmp/c49-flips/bin/git && chmod +x /tmp/c49-flips/bin/git
+out=$(PATH=/tmp/c49-flips/bin:$PATH python3 scripts/artifact-hygiene.py 2>&1); code=$?
+[ $code -eq 2 ] || { echo "FAIL[F10]: exit $code, expected 2 (crashing authority wore a verdict?)"; echo "$out"; fails=1; }
+echo "$out" | grep -q "check-ignore on .* errored rc=3" || { echo "FAIL[F10]: crash not named"; echo "$out"; fails=1; }
+echo "OK[F10]: crashing check-ignore authority exits 2 WITH A NAME"
+
+cd /; rm -rf /tmp/c40-flips /tmp/c49-flips
+[ $fails -eq 0 ] && echo "FLIPS: 14/14 OK" || { echo "FLIPS: FAILURES"; exit 1; }

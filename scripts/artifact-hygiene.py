@@ -32,8 +32,20 @@ The repo's own CI GENERATES files inside the checkout:
      by definition, so it belongs in the inventory by derivation, not by
      somebody remembering to add it (A c50 're-derive YOUR inventory'
      lesson made machine-enforced).
+  E. CATCH-VS-PREVENT PARITY (B c44 offer, c49): a BLOCKLIST name CATCHES
+     the accident at rail time; an .gitignore line PREVENTS it (a bare
+     `git add -A` skips it). Every leg-A name must score rc=0 from
+     `git check-ignore --no-index -q`, and every leg-D derived prefix must
+     have a PROBE CHILD that scores rc=0 (a dir-only rule never matches
+     the bare dir name — measured: '.ethkey-tools/' rc=0, '.ethkey-tools'
+     rc=1 — so the probe is `<prefix>probe`, A c55 child-path shape).
+     check-ignore rc>1 = the authority itself broke -> exit 2 WITH THE
+     NAME (c43 rule: a crashing rail must not masquerade as a verdict).
+     Without E, my c44 proof.md ignore-line fix was a one-time hand-close:
+     nothing asserted the NEXT blocklist entry would carry one.
 
-Exit codes: 0 clean, 1 a violation is printed, 2 bad usage.
+Exit codes: 0 clean, 1 a violation is printed, 2 bad usage or broken
+check-ignore authority.
 """
 import os
 import subprocess
@@ -131,6 +143,15 @@ def checkout_paths():
     return prefixes
 
 
+def check_ignore_rc(path):
+    """Prevention authority: `git check-ignore --no-index -q` on a PROBE
+    path (never on the index). Returns git's rc: 0 = some ignore rule
+    covers it, 1 = uncovered, >1 = the authority itself errored."""
+    r = subprocess.run(["git", "check-ignore", "--no-index", "-q", path],
+                       capture_output=True, text=True)
+    return r.returncode
+
+
 def main():
     if len(sys.argv) > 1:
         print(__doc__.strip().splitlines()[-1])
@@ -180,6 +201,32 @@ def main():
     print(f"OK: checkout-path legs derived {sorted(prefixes)}"
           if not dhits else
           f"checkout-path prefixes scanned: {sorted(prefixes)}")
+
+    # E. catch-vs-prevent parity: leg A/D names CATCH the accident; an
+    # ignore rule PREVENTS it. Authority is check-ignore --no-index (the
+    # index is irrelevant to what `git add -A` would do). Leg-D prefixes
+    # are probed as CHILD paths (dir-only rules don't match the bare dir;
+    # measured on my own .gitignore: '.ethkey-tools/' rc=0, bare rc=1).
+    # rc>1 names the crash and exits 2 — never a silent skip, never a
+    # verdict wearing an error.
+    efail = 0
+    probes = sorted(BLOCKLIST) + sorted(p + "probe" for p in prefixes)
+    for probe in probes:
+        rc = check_ignore_rc(probe)
+        if rc > 1:
+            print(f"FAIL: check-ignore on '{probe}' errored rc={rc} "
+                  "(authority broken, not a verdict)")
+            sys.exit(2)
+        if rc == 1:
+            print(f"FAIL: catch-without-prevent: '{probe}' is a "
+                  f"generated-byproduct path with NO ignore rule "
+                  f"(a bare `git add -A` would re-track it)")
+            fails += 1
+            efail += 1
+    if not efail:
+        print(f"OK: catch-vs-prevent parity: {len(probes)}/{len(probes)} "
+              f"byproduct paths covered by an ignore rule "
+              f"({len(BLOCKLIST)} names + {len(prefixes)} derived prefixes)")
 
     if fails:
         print(f"artifact-hygiene: {fails} violation(s)")
