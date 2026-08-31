@@ -29,7 +29,13 @@ check() { # name expected_rc actual_rc output [must-name-substring]
 
 # CONTROL: pristine clone green
 d=$(fresh control); out=$(run "$d" 2>&1); rc=$?
-check CONTROL 0 "$rc" "$out"
+# c45: baseline exemption count must print 0 — the count is the CONTROL's
+# own assertion now, so F7's '+1' is anchored to a measured zero.
+if [ "$rc" = 0 ] && ! grep -q 'runtime-scope .git/ exemptions: 0' <<<"$out"; then
+  echo "FAIL[CONTROL]: green but OK-line lacks 'exemptions: 0' (printed-count contract)"; fail=$((fail+1))
+else
+  check CONTROL 0 "$rc" "$out"
+fi
 
 # F1: README prose directory ref rots -> A RED (target: the in-repo composite
 # path named at README:114, prose-scope backticked)
@@ -87,6 +93,16 @@ printf '\nThe tool installs into `.git/hooks/runtime-scope-flip`.\n' >> "$d/READ
 grep -q 'runtime-scope-flip' "$d/README.md" || { echo "MUTATION-FAILED F7"; exit 1; }
 out=$(run "$d" 2>&1); rc=$?
 check F7_dotgit_runtime_scope_green 0 "$rc" "$out"
+# c45 STRENGTHEN: rc=0 alone is too weak — a rail that exempted EVERYTHING
+# also passes rc. The printed count must say EXACTLY 1 and name the mutated
+# ref (exemption fired on my mutation, not by luck), and the same ref must
+# NOT appear as a checked path (seen count stays 9 = the README's baseline).
+if [ "$rc" = 0 ]; then
+  grep -q 'runtime-scope .git/ exemptions: 1 \[.git/hooks/runtime-scope-flip\]' <<<"$out" \
+    && grep -q '9 checked' <<<"$out" \
+    && { echo "PASS[F7_printed_count_names_mutation]"; pass=$((pass+1)); } \
+    || { echo "FAIL[F7_printed_count_names_mutation]: OK-line:"; echo "$out" | grep 'prose paths' | sed 's/^/    /'; fail=$((fail+1)); }
+fi
 
 # F8: must-STILL-be-RED pair for F7 — '.git' NOT as first component
 #     (src/.git/bait.md) is an ordinary dead repo-local path and stays RED.

@@ -25,6 +25,17 @@ Checks (exit 1 on any violation, exit 2 on missing inputs — fail-closed):
      `.git/hooks/pre-commit` / `.git/hookpack/cache/` — its whole product
      installs INTO .git — and the rail false-RED'd them. The exclusion is
      FIRST-component-only: `src/.git/bait.md` still goes RED, flip F8.)
+     The exemption PRINTS its count on the OK line (A c51 F7 rule, turned on
+     my own rail c45): a silent carve-out is a hole with a name, and the
+     count is what lets the flip harness assert the exemption fired on
+     EXACTLY the mutated ref. A c52 asked whether a TRACKED `.git/...` path
+     would ride this exemption; measured (c45, git 2.43): no such index entry
+     is constructible — `git add`/`add -f` silently ignore `.git/` paths
+     (rc=0, zero entries), `update-index` prints 'Ignoring path', and
+     `read-tree`/`reset --hard` of a plumbing-crafted tree fail
+     'invalid path .git/...'. The exemption can never mask a tracked file
+     because the tracked file cannot exist; tracked-first ORDER is therefore
+     not needed here (documented, not assumed).
   B. .secretgateignore liveness (if present): every non-comment pattern must
      match >=1 tracked path, using secretgate's real semantics (exact path,
      'dir/' prefix, or fnmatch). A pattern matching NOTHING is a dead
@@ -141,11 +152,13 @@ def main():
     for m in re.finditer(r"\]\((?!https?://|mailto:|#|/)([^)#\s]+)", prose):
         refs.append(m.group(1))
     seen, dead = set(), []
+    runtime_skipped = []
     for r_ in refs:
         rel = r_[2:] if r_.startswith("./") else (r_[1:] if r_.startswith("/") else r_)
         rel = rel.rstrip("/")
         if rel.split("/")[0] == ".git":
-            continue  # runtime-scope: git's own dir, never indexable (see docstring)
+            runtime_skipped.append(rel)  # runtime-scope, never indexable (docstring)
+            continue
         if rel in seen:
             continue
         seen.add(rel)
@@ -155,7 +168,12 @@ def main():
         print(f"FAIL: README references a path that is not tracked: {d}")
         fails += 1
     if not dead:
-        ok(f"README prose paths all resolve ({len(seen)} checked: files + dirs)")
+        # printed exemption count (A c51 rule): the carve-out never skips
+        # silently, and a flip can assert it fired on EXACTLY its mutation.
+        uniq_rt = sorted(set(runtime_skipped))
+        ok(f"README prose paths all resolve ({len(seen)} checked: files + dirs; "
+           f"runtime-scope .git/ exemptions: {len(uniq_rt)}"
+           + (f" [{', '.join(uniq_rt)}]" if uniq_rt else "") + ")")
 
     # --- B. .secretgateignore liveness ------------------------------------
     ex = read(EXCLUDES)
