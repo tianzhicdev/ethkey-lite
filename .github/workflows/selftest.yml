@@ -239,7 +239,10 @@ jobs:
           # A's c100 pin-doc law: this gate needs an allow-mark on its own
           # payload line because a bare 64-hex here is a content address,
           # exactly what the pin is. <!-- secretgate: allow sha256 content pin -->
-          EXPECT_FENCE_SHA=1bfbba1c3a7bb3364411608bca406fb85039fcefe81e08d4cf82776f9876c1f5
+          # NB the `export`: a plain assignment is shell-local and INVISIBLE
+          # to the python heredoc's os.environ (c110 CI self-catch: green
+          # locally only because my harness exported it by hand).
+          export EXPECT_FENCE_SHA=1bfbba1c3a7bb3364411608bca406fb85039fcefe81e08d4cf82776f9876c1f5
           python3 - <<'EOF'
           import hashlib, re, sys
           src = open('README.md').read()
